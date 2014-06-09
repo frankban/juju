@@ -8,14 +8,14 @@ import (
 	"os"
 	"path"
 
+	gitjujutesting "github.com/juju/testing"
 	gc "launchpad.net/gocheck"
 
 	"github.com/juju/juju/store"
-	"github.com/juju/juju/testing"
 )
 
 type ConfigSuite struct {
-	testing.BaseSuite
+	gitjujutesting.IsolationSuite
 }
 
 var _ = gc.Suite(&ConfigSuite{})
@@ -27,11 +27,11 @@ bar: false
 `
 
 func (s *ConfigSuite) SetUpSuite(c *gc.C) {
-	s.BaseSuite.SetUpSuite(c)
+	s.IsolationSuite.SetUpSuite(c)
 }
 
 func (s *ConfigSuite) TearDownSuite(c *gc.C) {
-	s.BaseSuite.TearDownSuite(c)
+	s.IsolationSuite.TearDownSuite(c)
 }
 
 func (s *ConfigSuite) TestReadConfig(c *gc.C) {

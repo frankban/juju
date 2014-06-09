@@ -32,7 +32,7 @@ var _ = gc.Suite(&TrivialSuite{})
 
 type StoreSuite struct {
 	testing.MgoSuite
-	testing.HTTPSuite
+	gitjujutesting.HTTPSuite
 	gitjujutesting.FakeHomeSuite
 	store *store.Store
 }
