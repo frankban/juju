@@ -93,7 +93,7 @@ func (h *charmsHandler) sendJSON(w http.ResponseWriter, statusCode int, response
 // sendBundleContent uses the given bundleContentSenderFunc to send a response
 // related to the charm archive located in the given archivePath.
 func sendBundleContent(w http.ResponseWriter, r *http.Request, archivePath string, sender bundleContentSenderFunc) {
-	bundle, err := charm.ReadBundle(archivePath)
+	bundle, err := charm.ReadCharmArchive(archivePath)
 	if err != nil {
 		http.Error(
 			w, fmt.Sprintf("unable to read archive in %q: %v", archivePath, err),
@@ -195,7 +195,7 @@ func (h *charmsHandler) processPost(r *http.Request) (*charm.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	archive, err := charm.ReadBundle(tempFile.Name())
+	archive, err := charm.ReadCharmArchive(tempFile.Name())
 	if err != nil {
 		return nil, fmt.Errorf("invalid charm archive: %v", err)
 	}
@@ -249,7 +249,7 @@ func (h *charmsHandler) processUploadedArchive(path string) error {
 		return errors.Annotate(err, "cannot read charm archive")
 	}
 	if rootDir == "." {
-		// Normal charm, just use charm.ReadBundle().
+		// Normal charm, just use charm.ReadCharmArchive).
 		return nil
 	}
 

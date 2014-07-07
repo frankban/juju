@@ -290,7 +290,7 @@ func (s *charmsSuite) TestUploadRepackagesNestedArchives(c *gc.C) {
 	c.Assert(err, gc.IsNil)
 
 	// Try reading it as a bundle - should fail due to nested dirs.
-	_, err = charm.ReadBundle(tempFile.Name())
+	_, err = charm.ReadCharmArchive(tempFile.Name())
 	c.Assert(err, gc.ErrorMatches, "bundle file not found: metadata.yaml")
 
 	// Now try uploading it - should succeeed and be repackaged.
@@ -323,7 +323,7 @@ func (s *charmsSuite) TestUploadRepackagesNestedArchives(c *gc.C) {
 	err = ioutil.WriteFile(downloadedFile.Name(), data, 0644)
 	c.Assert(err, gc.IsNil)
 
-	bundle, err := charm.ReadBundle(downloadedFile.Name())
+	bundle, err := charm.ReadCharmArchive(downloadedFile.Name())
 	c.Assert(err, gc.IsNil)
 	c.Assert(bundle.Revision(), jc.DeepEquals, sch.Revision())
 	c.Assert(bundle.Meta(), jc.DeepEquals, sch.Meta())

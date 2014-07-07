@@ -78,7 +78,7 @@ func (br *bundleReader) AddCustomBundle(c *gc.C, url *corecharm.URL, customize f
 	defer file.Close()
 	err = dir.BundleTo(file)
 	c.Assert(err, gc.IsNil)
-	bundle, err := corecharm.ReadBundle(bunpath)
+	bundle, err := corecharm.ReadCharmArchive(bunpath)
 	c.Assert(err, gc.IsNil)
 	return br.AddBundle(c, url, bundle)
 }

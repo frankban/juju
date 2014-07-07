@@ -80,7 +80,7 @@ func (s *BundlesDirSuite) AddCharm(c *gc.C) (*uniter.Charm, *state.Charm, []byte
 	surl, err := url.Parse(s.URL("/some/charm.bundle"))
 	c.Assert(err, gc.IsNil)
 	bunpath := charmtesting.Charms.BundlePath(c.MkDir(), "dummy")
-	bun, err := corecharm.ReadBundle(bunpath)
+	bun, err := corecharm.ReadCharmArchive(bunpath)
 	c.Assert(err, gc.IsNil)
 	bundata, hash := readHash(c, bunpath)
 	sch, err := s.State.AddCharm(bun, curl, surl, hash)
