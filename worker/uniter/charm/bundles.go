@@ -8,9 +8,9 @@ import (
 	"os"
 	"path"
 
-	"github.com/juju/charm"
 	"github.com/juju/errors"
 	"github.com/juju/utils"
+	"gopkg.in/juju/charm.v2"
 
 	"github.com/juju/juju/downloader"
 )

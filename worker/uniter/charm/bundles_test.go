@@ -13,11 +13,11 @@ import (
 	"path/filepath"
 	"time"
 
-	corecharm "github.com/juju/charm"
-	charmtesting "github.com/juju/charm/testing"
 	gitjujutesting "github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	"github.com/juju/utils"
+	corecharm "gopkg.in/juju/charm.v2"
+	charmtesting "gopkg.in/juju/charm.v2/testing"
 	gc "launchpad.net/gocheck"
 
 	"github.com/juju/juju/juju/testing"

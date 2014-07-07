@@ -4,8 +4,8 @@
 package state
 
 import (
-	charmtesting "github.com/juju/charm/testing"
 	gitjujutesting "github.com/juju/testing"
+	charmtesting "gopkg.in/juju/charm.v2/testing"
 	"labix.org/v2/mgo/bson"
 	"labix.org/v2/mgo/txn"
 	gc "launchpad.net/gocheck"

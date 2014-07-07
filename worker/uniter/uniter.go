@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	corecharm "github.com/juju/charm"
-	"github.com/juju/charm/hooks"
 	"github.com/juju/cmd"
 	"github.com/juju/loggo"
 	"github.com/juju/names"
 	"github.com/juju/utils/exec"
 	"github.com/juju/utils/fslock"
 	proxyutils "github.com/juju/utils/proxy"
+	corecharm "gopkg.in/juju/charm.v2"
+	"gopkg.in/juju/charm.v2/hooks"
 	"launchpad.net/tomb"
 
 	"github.com/juju/juju/agent/tools"

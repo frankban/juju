@@ -6,9 +6,9 @@ package uniter
 import (
 	"sort"
 
-	"github.com/juju/charm"
 	"github.com/juju/loggo"
 	"github.com/juju/names"
+	"gopkg.in/juju/charm.v2"
 	"launchpad.net/tomb"
 
 	"github.com/juju/juju/state/api/params"

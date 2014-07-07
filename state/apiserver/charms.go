@@ -21,9 +21,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/charm"
 	"github.com/juju/errors"
 	ziputil "github.com/juju/utils/zip"
+	"gopkg.in/juju/charm.v2"
 
 	"github.com/juju/juju/environs"
 	"github.com/juju/juju/state/api/params"

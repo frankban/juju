@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/charm"
 	"github.com/juju/cmd"
+	"gopkg.in/juju/charm.v2"
 	"launchpad.net/gnuflag"
 
 	"github.com/juju/juju/bzr"

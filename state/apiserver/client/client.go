@@ -9,11 +9,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/juju/charm"
 	"github.com/juju/errors"
 	"github.com/juju/loggo"
 	"github.com/juju/names"
 	"github.com/juju/utils"
+	"gopkg.in/juju/charm.v2"
 
 	"github.com/juju/juju/environs"
 	"github.com/juju/juju/environs/config"

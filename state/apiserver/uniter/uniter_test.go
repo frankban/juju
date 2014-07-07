@@ -6,10 +6,10 @@ package uniter_test
 import (
 	stdtesting "testing"
 
-	"github.com/juju/charm"
 	"github.com/juju/errors"
 	"github.com/juju/names"
 	jc "github.com/juju/testing/checkers"
+	"gopkg.in/juju/charm.v2"
 	gc "launchpad.net/gocheck"
 
 	envtesting "github.com/juju/juju/environs/testing"

@@ -10,9 +10,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/juju/charm"
 	"github.com/juju/names"
 	gitjujutesting "github.com/juju/testing"
+	"gopkg.in/juju/charm.v2"
 	"labix.org/v2/mgo"
 	gc "launchpad.net/gocheck"
 
