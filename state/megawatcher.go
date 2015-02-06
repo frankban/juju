@@ -11,6 +11,7 @@ import (
 	"github.com/juju/errors"
 	"gopkg.in/mgo.v2"
 
+	"github.com/juju/juju/network"
 	"github.com/juju/juju/state/multiwatcher"
 	"github.com/juju/juju/state/watcher"
 )
@@ -105,7 +106,6 @@ func (u *backingUnit) updated(st *State, store *multiwatcherStore, id interface{
 		Service:     u.Service,
 		Series:      u.Series,
 		MachineId:   u.MachineId,
-		Ports:       u.Ports,
 		Subordinate: u.Principal != "",
 	}
 	if u.CharmURL != nil {
@@ -134,8 +134,23 @@ func (u *backingUnit) updated(st *State, store *multiwatcherStore, id interface{
 	}
 	info.PublicAddress = publicAddress
 	info.PrivateAddress = privateAddress
+	portRanges, err := getUnitPortRanges(st, u.Name)
+	if err != nil {
+		return err
+	}
+	info.Ports = portRanges
 	store.Update(info)
 	return nil
+}
+
+// getUnitPortRanges returns a slice containing the open port ranges of the
+// unit with the given unitName.
+func getUnitPortRanges(st *State, unitName string) ([]network.PortRange, error) {
+	u, err := st.Unit(unitName)
+	if err != nil {
+		return nil, err
+	}
+	return u.OpenedPorts()
 }
 
 // getUnitAddresses returns the public and private addresses on a given unit.

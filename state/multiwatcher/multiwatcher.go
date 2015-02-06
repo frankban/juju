@@ -169,7 +169,7 @@ type UnitInfo struct {
 	PublicAddress  string
 	PrivateAddress string
 	MachineId      string
-	Ports          []network.Port
+	Ports          []network.PortRange
 	Status         Status
 	StatusInfo     string
 	StatusData     map[string]interface{}
