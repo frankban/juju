@@ -122,7 +122,7 @@ func (s *charmVersionSuite) TestUpdateRevisions(c *gc.C) {
 	c.Assert(err, jc.Satisfies, errors.IsNotFound)
 }
 
-func (s *charmVersionSuite) TestUpdateAuthorization(c *gc.C) {
+func (s *charmVersionSuite) TestWordpressCharmNoReadAccessIsntVisible(c *gc.C) {
 	s.AddMachine(c, "0", state.JobManageEnviron)
 	s.SetupScenario(c)
 
