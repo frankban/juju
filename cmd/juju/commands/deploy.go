@@ -19,6 +19,7 @@ import (
 	"github.com/juju/juju/apiserver/params"
 	"github.com/juju/juju/cmd/envcmd"
 	"github.com/juju/juju/cmd/juju/block"
+	"github.com/juju/juju/cmd/juju/bundles"
 	"github.com/juju/juju/cmd/juju/service"
 	"github.com/juju/juju/constraints"
 	"github.com/juju/juju/juju/osenv"
@@ -193,6 +194,27 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 	curl, repo, err := resolveCharmURL(c.CharmName, csClient.params, ctx.AbsPath(c.RepoPath), conf)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// TODO frankban: fix this!
+	if curl.Series == "bundle" {
+		ctx.Infof("START!")
+		f, err := os.Open("/tmp/bundle1.yaml")
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		data, err := charm.ReadBundleData(f)
+		if err != nil {
+			return err
+		}
+		if err := data.Verify(nil); err != nil {
+			return err
+		}
+		if err := bundles.Deploy(data, client, ctx); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	curl, err = addCharmViaAPI(client, ctx, curl, repo, csClient)
