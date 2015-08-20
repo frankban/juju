@@ -48,7 +48,6 @@ func Deploy(data *charm.BundleData, client *api.Client, ctx *cmd.Context) error 
 		}
 	}
 	ctx.Infof("bundle deployment completed")
-	ctx.Infof("RESULTS: %#v", results)
 	return nil
 }
 
@@ -189,6 +188,7 @@ func (h *handler) addUnit(id string, args []interface{}, results map[string]stri
 	}
 	numUnits := args[1].(int)
 	machineSpec := ""
+	// TODO frankban: improve numUnit handling.
 	if numUnits == 1 && args[2] != nil {
 		machineSpec = resolve(args[2].(string), results)
 		h.ctx.Infof("adding 1 unit for service %s to machine %s", service, machineSpec)
