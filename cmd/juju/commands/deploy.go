@@ -198,7 +198,6 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 
 	// TODO frankban: fix this!
 	if curl.Series == "bundle" {
-		ctx.Infof("START!")
 		f, err := os.Open("/tmp/bundle1.yaml")
 		if err != nil {
 			return err
