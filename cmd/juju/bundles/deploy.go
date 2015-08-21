@@ -4,6 +4,9 @@
 package bundles
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/juju/bundlechanges"
 	"github.com/juju/cmd"
 	"github.com/juju/errors"
@@ -17,10 +20,16 @@ import (
 	"github.com/juju/juju/state/multiwatcher"
 )
 
-// Deploy deploys the given bundle data using the given API client.
+// Deploy deploys the given bundle using the given API client.
 // The deployment is not transactional, and its progress is notified using the
 // given command context.
-func Deploy(data *charm.BundleData, client *api.Client, ctx *cmd.Context) error {
+func Deploy(bundle charm.Bundle, client *api.Client, ctx *cmd.Context) error {
+	data := bundle.Data()
+	// TODO frankban: provide a verifyConstraints function.
+	if err := data.Verify(nil); err != nil {
+		return errors.Trace(err)
+	}
+
 	changes := bundlechanges.FromData(data)
 	h := &handler{
 		changes: make(map[string]*bundlechanges.Change, len(changes)),
@@ -40,6 +49,7 @@ func Deploy(data *charm.BundleData, client *api.Client, ctx *cmd.Context) error 
 		"setAnnotations": h.setAnnotations,
 	}
 
+	ctx.Infof("starting bundle deployment")
 	results := make(map[string]string, len(changes))
 	for _, change := range changes {
 		f := changeMap[change.Method]
@@ -62,7 +72,7 @@ type handler struct {
 func (h *handler) addCharm(id string, args []interface{}, results map[string]string) error {
 	url := args[0].(string)
 	curl := charm.MustParseURL(url)
-	h.ctx.Infof("adding charm %q", url)
+	h.ctx.Infof("adding charm %s", url)
 	if err := h.client.AddCharm(curl); err != nil {
 		return errors.Annotate(err, "cannot add charm")
 	}
@@ -85,10 +95,10 @@ func (h *handler) addService(id string, args []interface{}, results map[string]s
 		// reuse the existing service, otherwise, deploy this service with
 		// another name.
 		// TODO frankban: implement this logic.
-		h.ctx.Infof("reusing service %q (charm: %s)", service, svcStatus.Charm)
+		h.ctx.Infof("reusing service %s (charm: %s)", service, svcStatus.Charm)
 	} else {
 		// The service does not exist in the environment.
-		h.ctx.Infof("deploying service %q (charm: %s)", service, url)
+		h.ctx.Infof("deploying service %s (charm: %s)", service, url)
 		// TODO frankban: handle service constraints in the bundle changes.
 		numUnits, configYAML, cons, toMachineSpec := 0, "", constraints.Value{}, ""
 		if err := h.client.ServiceDeploy(url, service, numUnits, configYAML, cons, toMachineSpec); err != nil {
@@ -96,7 +106,7 @@ func (h *handler) addService(id string, args []interface{}, results map[string]s
 		}
 	}
 	if len(options) > 0 {
-		h.ctx.Infof("configuring service %q", service)
+		h.ctx.Infof("configuring service %s", service)
 		config, err := yaml.Marshal(map[string]map[string]interface{}{service: options})
 		if err != nil {
 			return errors.Annotate(err, "cannot marshal service options")
@@ -124,7 +134,7 @@ func (h *handler) addMachine(id string, args []interface{}, results map[string]s
 	existing := len(status.Services[service].Units)
 	want := h.data.Services[bundleService].NumUnits
 	if existing >= want {
-		h.ctx.Infof("not adding another machine to host a %s unit: %d unit(s) already present", service, existing)
+		h.ctx.Infof("not creating another machine to host %s unit: %d unit(s) already present", service, existing)
 		results[id] = ""
 		return nil
 	}
@@ -137,23 +147,23 @@ func (h *handler) addMachine(id string, args []interface{}, results map[string]s
 		Jobs:     []multiwatcher.MachineJob{multiwatcher.JobHostUnits},
 	}
 	if ctype == "" {
-		h.ctx.Infof("adding a new machine for holding %s unit", service)
+		h.ctx.Infof("creating new machine for holding %s unit", service)
 	} else {
 		containerType, err := instance.ParseContainerType(ctype)
 		if err != nil {
-			return errors.Annotate(err, "cannot add machine")
+			return errors.Annotate(err, "cannot create machine")
 		}
 		p.ContainerType = containerType
 		if p.ParentId == "" {
-			h.ctx.Infof("adding %q container to a new machine for holding %s unit", ctype, service)
+			h.ctx.Infof("creating %s container in new machine for holding %s unit", ctype, service)
 		} else {
 			p.ParentId = resolve(p.ParentId, results)
-			h.ctx.Infof("adding %q container to machine %q for holding %s unit", ctype, p.ParentId, service)
+			h.ctx.Infof("creating %s container in machine %s for holding %s unit", ctype, p.ParentId, service)
 		}
 	}
 	r, err := h.client.AddMachines([]params.AddMachineParams{p})
 	if err != nil {
-		return errors.Annotate(err, "cannot add machine")
+		return errors.Annotate(err, "cannot create machine")
 	}
 	if r[0].Error != nil {
 		return errors.Trace(r[0].Error)
@@ -164,7 +174,27 @@ func (h *handler) addMachine(id string, args []interface{}, results map[string]s
 
 // addRelation creates a relationship between two services.
 func (h *handler) addRelation(id string, args []interface{}, results map[string]string) error {
-	// TODO frankban: implement this.
+	ep1, ep2 := parseEndpoint(args[0], results), parseEndpoint(args[1], results)
+	// Check whether the given relation already exists.
+	status, err := h.client.Status(nil)
+	if err != nil {
+		return errors.Annotate(err, "cannot retrieve environment status")
+	}
+	// TODO frankban: do the check below in a better way.
+	for _, r := range status.Relations {
+		if len(r.Endpoints) != 2 {
+			continue
+		}
+		if (r.Endpoints[0].String() == ep1.String() && r.Endpoints[1].String() == ep2.String()) ||
+			(r.Endpoints[1].String() == ep1.String() && r.Endpoints[0].String() == ep2.String()) {
+			h.ctx.Infof("%s and %s are already related", ep1, ep2)
+			return nil
+		}
+	}
+	h.ctx.Infof("relating %s and %s", ep1, ep2)
+	if _, err := h.client.AddRelation(ep1.String(), ep2.String()); err != nil {
+		return errors.Annotate(err, "cannot add relation")
+	}
 	return nil
 }
 
@@ -188,18 +218,26 @@ func (h *handler) addUnit(id string, args []interface{}, results map[string]stri
 	}
 	numUnits := args[1].(int)
 	machineSpec := ""
-	// TODO frankban: improve numUnit handling.
-	if numUnits == 1 && args[2] != nil {
-		machineSpec = resolve(args[2].(string), results)
-		h.ctx.Infof("adding 1 unit for service %s to machine %s", service, machineSpec)
+	if numUnits == 1 {
+		if args[2] != nil {
+			machineSpec = resolve(args[2].(string), results)
+			h.ctx.Infof("adding %s unit to machine %s", service, machineSpec)
+		} else {
+			h.ctx.Infof("adding %s unit to new machine", service)
+		}
 	} else {
-		h.ctx.Infof("adding %d units for service %s", numUnits, service)
+		// TODO frankban: note that we always get one unit from the bundle
+		// changes, so perhaps we should avoid specify the number of units
+		// there, or maybe wait for possible future optimizations?
+		// Anyway, this code path is basically unreachable.
+		h.ctx.Infof("adding %d %s units", numUnits, service)
 	}
 	r, err := h.client.AddServiceUnits(service, numUnits, machineSpec)
 	if err != nil {
 		return errors.Annotate(err, "cannot add service units")
 	}
 	if numUnits != 1 {
+		// TODO frankban: unreachable for now, see above.
 		return nil
 	}
 	// Retrieve the machine on which the unit has been deployed.
@@ -246,4 +284,30 @@ mainloop:
 func resolve(placeholder string, results map[string]string) string {
 	id := placeholder[1:]
 	return results[id]
+}
+
+// parseEndpoint creates an endpoint from its string representation in e.
+func parseEndpoint(e interface{}, results map[string]string) *endpoint {
+	parts := strings.SplitN(e.(string), ":", 2)
+	ep := &endpoint{
+		service: resolve(parts[0], results),
+	}
+	if len(parts) == 2 {
+		ep.relation = parts[1]
+	}
+	return ep
+}
+
+// endpoint holds a relation endpoint.
+type endpoint struct {
+	service  string
+	relation string
+}
+
+// String returns the string representation of an endpoint.
+func (ep endpoint) String() string {
+	if ep.relation == "" {
+		return ep.service
+	}
+	return fmt.Sprintf("%s:%s", ep.service, ep.relation)
 }

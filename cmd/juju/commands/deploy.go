@@ -196,22 +196,13 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 		return errors.Trace(err)
 	}
 
-	// TODO frankban: fix this!
 	if curl.Series == "bundle" {
-		f, err := os.Open("/tmp/bundle1.yaml")
+		bundle, err := repo.GetBundle(curl)
 		if err != nil {
-			return err
+			return block.ProcessBlockedError(err, block.BlockChange)
 		}
-		defer f.Close()
-		data, err := charm.ReadBundleData(f)
-		if err != nil {
-			return err
-		}
-		if err := data.Verify(nil); err != nil {
-			return err
-		}
-		if err := bundles.Deploy(data, client, ctx); err != nil {
-			return err
+		if err := bundles.Deploy(bundle, client, ctx); err != nil {
+			return block.ProcessBlockedError(err, block.BlockChange)
 		}
 		return nil
 	}
