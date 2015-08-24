@@ -16,6 +16,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/juju/bundlechanges"
 	"github.com/juju/errors"
 	"github.com/juju/loggo"
 	"github.com/juju/names"
@@ -273,6 +274,39 @@ func (s *clientSuite) TestDestroyEnvironment(c *gc.C) {
 	err := client.DestroyEnvironment()
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(called, jc.IsTrue)
+}
+
+func (s *clientSuite) TestGetBundleChanges(c *gc.C) {
+	client := s.APIState.Client()
+	cleanup := api.PatchClientFacadeCall(client,
+		func(req string, args interface{}, resp interface{}) error {
+			c.Assert(req, gc.Equals, "GetBundleChanges")
+			c.Assert(args, jc.DeepEquals, params.GetBundleChangesParams{
+				BundleDataYAML: "example: yaml",
+			})
+			if resp, ok := resp.(*params.GetBundleChangesResults); ok {
+				resp.Changes = []*params.BundleChangesChange{{
+					Method: "test1",
+				}, {
+					Method: "test2",
+				}}
+				resp.Errors = []string{"bad", "wolf"}
+			} else {
+				c.Log("wrong output structure")
+				c.Fail()
+			}
+			return nil
+		})
+	defer cleanup()
+
+	changes, errors, err := client.GetBundleChanges("example: yaml")
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(changes, jc.DeepEquals, []*bundlechanges.Change{{
+		Method: "test1",
+	}, {
+		Method: "test2",
+	}})
+	c.Assert(errors, jc.DeepEquals, []string{"bad", "wolf"})
 }
 
 func (s *clientSuite) TestShareEnvironmentThreeUsers(c *gc.C) {
