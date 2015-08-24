@@ -40,19 +40,27 @@ func Deploy(bundle charm.Bundle, client *api.Client, ctx *cmd.Context) error {
 	for _, change := range changes {
 		h.changes[change.Id] = change
 	}
-	changeMap := map[string]func(id string, args []interface{}, results map[string]string) error{
-		"addCharm":       h.addCharm,
-		"deploy":         h.addService,
-		"addMachines":    h.addMachine,
-		"addRelation":    h.addRelation,
-		"addUnit":        h.addUnit,
-		"setAnnotations": h.setAnnotations,
-	}
 
 	ctx.Infof("starting bundle deployment")
 	results := make(map[string]string, len(changes))
+	var f func(id string, args []interface{}, results map[string]string) error
 	for _, change := range changes {
-		f := changeMap[change.Method]
+		switch change.Method {
+		case "addCharm":
+			f = h.addCharm
+		case "deploy":
+			f = h.addService
+		case "addMachines":
+			f = h.addMachine
+		case "addRelation":
+			f = h.addRelation
+		case "addUnit":
+			f = h.addUnit
+		case "setAnnotations":
+			f = h.setAnnotations
+		default:
+			return errors.New("unknown change method: " + change.Method)
+		}
 		if err := f(change.Id, change.Args, results); err != nil {
 			return errors.Annotate(err, "cannot deploy bundle")
 		}
