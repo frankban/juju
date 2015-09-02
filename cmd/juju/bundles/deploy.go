@@ -219,12 +219,14 @@ func (h *handler) addUnit(id string, args bundlechanges.AddUnitArgs) error {
 		h.ctx.Infof("not adding new units to service %s: %d unit(s) already present", service, existing)
 		return nil
 	}
-	if args.To == "" {
-		h.ctx.Infof("adding %s unit to new machine", service)
+	machineSpec := ""
+	if args.To != "" {
+		machineSpec = resolve(args.To, h.results)
+		h.ctx.Infof("adding %s unit to machine %s", service, machineSpec)
 	} else {
-		h.ctx.Infof("adding %s unit to machine %s", service, args.To)
+		h.ctx.Infof("adding %s unit to new machine", service)
 	}
-	r, err := h.client.AddServiceUnits(service, 1, args.To)
+	r, err := h.client.AddServiceUnits(service, 1, machineSpec)
 	if err != nil {
 		return errors.Annotate(err, "cannot add service units")
 	}
