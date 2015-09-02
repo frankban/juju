@@ -11,7 +11,7 @@ import (
 	"github.com/juju/cmd"
 	"github.com/juju/errors"
 	"github.com/juju/names"
-	"gopkg.in/juju/charm.v5"
+	"gopkg.in/juju/charm.v6-unstable"
 	"launchpad.net/gnuflag"
 
 	"github.com/juju/juju/api"
@@ -150,7 +150,7 @@ func (c *DeployCommand) Init(args []string) error {
 		c.ServiceName = args[1]
 		fallthrough
 	case 1:
-		if _, err := charm.InferURL(args[0], "fake"); err != nil {
+		if _, err := charm.ParseReference(args[0]); err != nil {
 			return fmt.Errorf("invalid charm name %q", args[0])
 		}
 		c.CharmName = args[0]

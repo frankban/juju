@@ -8,7 +8,7 @@ import (
 
 	"github.com/juju/bundlechanges"
 	"github.com/juju/errors"
-	"gopkg.in/juju/charm.v5"
+	"gopkg.in/juju/charm.v6-unstable"
 
 	"github.com/juju/juju/apiserver/params"
 )
@@ -38,10 +38,10 @@ func (c *Client) GetBundleChanges(args params.GetBundleChangesParams) (params.Ge
 	results.Changes = make([]*params.BundleChangesChange, len(changes))
 	for i, c := range changes {
 		results.Changes[i] = &params.BundleChangesChange{
-			Id:       c.Id,
-			Method:   c.Method,
-			Args:     c.Args,
-			Requires: c.Requires,
+			Id:       c.Id(),
+			Method:   c.Method(),
+			Args:     c.GUIArgs(),
+			Requires: c.Requires(),
 		}
 	}
 	return results, nil
