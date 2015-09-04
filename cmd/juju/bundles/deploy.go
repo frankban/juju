@@ -47,17 +47,17 @@ func Deploy(bundle charm.Bundle, client *api.Client, ctx *cmd.Context) error {
 	for _, change := range changes {
 		switch change := change.(type) {
 		case *bundlechanges.AddCharmChange:
-			h.addCharm(change.Id(), change.Args)
+			h.addCharm(change.Id(), change.Params)
 		case *bundlechanges.AddMachineChange:
-			h.addMachine(change.Id(), change.Args)
+			h.addMachine(change.Id(), change.Params)
 		case *bundlechanges.AddRelationChange:
-			h.addRelation(change.Id(), change.Args)
+			h.addRelation(change.Id(), change.Params)
 		case *bundlechanges.AddServiceChange:
-			h.addService(change.Id(), change.Args)
+			h.addService(change.Id(), change.Params)
 		case *bundlechanges.AddUnitChange:
-			h.addUnit(change.Id(), change.Args)
+			h.addUnit(change.Id(), change.Params)
 		case *bundlechanges.SetAnnotationsChange:
-			h.setAnnotations(change.Id(), change.Args)
+			h.setAnnotations(change.Id(), change.Params)
 		default:
 			return errors.New(fmt.Sprintf("unknown change type: %T", change))
 		}
@@ -78,56 +78,56 @@ type handler struct {
 }
 
 // addCharm adds a charm to the environment.
-func (h *handler) addCharm(id string, args bundlechanges.AddCharmArgs) error {
-	url := charm.MustParseURL(args.Charm)
-	h.ctx.Infof("adding charm %s", args.Charm)
+func (h *handler) addCharm(id string, p bundlechanges.AddCharmParams) error {
+	url := charm.MustParseURL(p.Charm)
+	h.ctx.Infof("adding charm %s", p.Charm)
 	if err := h.client.AddCharm(url); err != nil {
 		return errors.Annotate(err, "cannot add charm")
 	}
-	h.results[id] = args.Charm
+	h.results[id] = p.Charm
 	return nil
 }
 
 // addService deploys or update a service with no units. Service options are
 // also set or updated.
-func (h *handler) addService(id string, args bundlechanges.AddServiceArgs) error {
+func (h *handler) addService(id string, p bundlechanges.AddServiceParams) error {
 	status, err := h.client.Status(nil)
 	if err != nil {
 		return errors.Annotate(err, "cannot retrieve environment status")
 	}
-	svcStatus, svcExists := status.Services[args.Service]
+	svcStatus, svcExists := status.Services[p.Service]
 	if svcExists {
 		// The service is already deployed in the environment: check that its
 		// charm is compatible with the one declared in the bundle. If it is,
 		// reuse the existing service, otherwise, deploy this service with
 		// another name.
 		// TODO frankban: implement this logic.
-		h.ctx.Infof("reusing service %s (charm: %s)", args.Service, svcStatus.Charm)
+		h.ctx.Infof("reusing service %s (charm: %s)", p.Service, svcStatus.Charm)
 	} else {
 		// The service does not exist in the environment.
-		h.ctx.Infof("deploying service %s (charm: %s)", args.Service, args.Charm)
+		h.ctx.Infof("deploying service %s (charm: %s)", p.Service, p.Charm)
 		// TODO frankban: handle service constraints in the bundle changes.
 		numUnits, configYAML, cons, toMachineSpec := 0, "", constraints.Value{}, ""
-		if err := h.client.ServiceDeploy(args.Charm, args.Service, numUnits, configYAML, cons, toMachineSpec); err != nil {
+		if err := h.client.ServiceDeploy(p.Charm, p.Service, numUnits, configYAML, cons, toMachineSpec); err != nil {
 			return errors.Annotate(err, "cannot deploy service")
 		}
 	}
-	if len(args.Options) > 0 {
-		h.ctx.Infof("configuring service %s", args.Service)
-		config, err := yaml.Marshal(map[string]map[string]interface{}{args.Service: args.Options})
+	if len(p.Options) > 0 {
+		h.ctx.Infof("configuring service %s", p.Service)
+		config, err := yaml.Marshal(map[string]map[string]interface{}{p.Service: p.Options})
 		if err != nil {
 			return errors.Annotate(err, "cannot marshal service options")
 		}
-		if err := h.client.ServiceSetYAML(args.Service, string(config)); err != nil {
+		if err := h.client.ServiceSetYAML(p.Service, string(config)); err != nil {
 			return errors.Annotate(err, "cannot set service options")
 		}
 	}
-	h.results[id] = args.Service
+	h.results[id] = p.Service
 	return nil
 }
 
 // addMachine creates a new top-level machine or container in the environment.
-func (h *handler) addMachine(id string, args bundlechanges.AddMachineArgs) error {
+func (h *handler) addMachine(id string, p bundlechanges.AddMachineParams) error {
 	// Check whether the desired number of units already exist in the
 	// environment, in which case, avoid adding other machines to host those
 	// service units.
@@ -138,34 +138,34 @@ func (h *handler) addMachine(id string, args bundlechanges.AddMachineArgs) error
 	change := h.serviceChangeForMachine(id)
 	service := h.results[change.Id()]
 	existing := len(status.Services[service].Units)
-	want := h.data.Services[change.Args.Service].NumUnits
+	want := h.data.Services[change.Params.Service].NumUnits
 	if existing >= want {
 		h.ctx.Infof("not creating another machine to host %s unit: %d unit(s) already present", service, existing)
 		h.results[id] = ""
 		return nil
 	}
-	p := params.AddMachineParams{
+	machineParams := params.AddMachineParams{
 		// TODO frankban: add constraints here.
-		Series:   args.Series,
-		ParentId: args.ParentId,
+		Series:   p.Series,
+		ParentId: p.ParentId,
 		Jobs:     []multiwatcher.MachineJob{multiwatcher.JobHostUnits},
 	}
-	if args.ContainerType == "" {
+	if p.ContainerType == "" {
 		h.ctx.Infof("creating new machine for holding %s unit", service)
 	} else {
-		containerType, err := instance.ParseContainerType(args.ContainerType)
+		containerType, err := instance.ParseContainerType(p.ContainerType)
 		if err != nil {
 			return errors.Annotate(err, "cannot create machine")
 		}
-		p.ContainerType = containerType
-		if p.ParentId == "" {
-			h.ctx.Infof("creating %s container in new machine for holding %s unit", args.ContainerType, service)
+		machineParams.ContainerType = containerType
+		if machineParams.ParentId == "" {
+			h.ctx.Infof("creating %s container in new machine for holding %s unit", p.ContainerType, service)
 		} else {
-			p.ParentId = resolve(p.ParentId, h.results)
-			h.ctx.Infof("creating %s container in machine %s for holding %s unit", args.ContainerType, p.ParentId, service)
+			machineParams.ParentId = resolve(machineParams.ParentId, h.results)
+			h.ctx.Infof("creating %s container in machine %s for holding %s unit", p.ContainerType, machineParams.ParentId, service)
 		}
 	}
-	r, err := h.client.AddMachines([]params.AddMachineParams{p})
+	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
 	if err != nil {
 		return errors.Annotate(err, "cannot create machine")
 	}
@@ -177,8 +177,8 @@ func (h *handler) addMachine(id string, args bundlechanges.AddMachineArgs) error
 }
 
 // addRelation creates a relationship between two services.
-func (h *handler) addRelation(id string, args bundlechanges.AddRelationArgs) error {
-	ep1, ep2 := parseEndpoint(args.Endpoint1, h.results), parseEndpoint(args.Endpoint2, h.results)
+func (h *handler) addRelation(id string, p bundlechanges.AddRelationParams) error {
+	ep1, ep2 := parseEndpoint(p.Endpoint1, h.results), parseEndpoint(p.Endpoint2, h.results)
 	// Check whether the given relation already exists.
 	status, err := h.client.Status(nil)
 	if err != nil {
@@ -203,16 +203,16 @@ func (h *handler) addRelation(id string, args bundlechanges.AddRelationArgs) err
 }
 
 // addUnit adds a single unit to a service already present in the environment.
-func (h *handler) addUnit(id string, args bundlechanges.AddUnitArgs) error {
+func (h *handler) addUnit(id string, p bundlechanges.AddUnitParams) error {
 	// Check whether the desired number of units already exist in the
 	// environment, in which case, avoid adding other units.
 	status, err := h.client.Status(nil)
 	if err != nil {
 		return errors.Annotate(err, "cannot retrieve environment status")
 	}
-	service := resolve(args.Service, h.results)
-	change := h.changes[args.Service[1:]]
-	bundleService := change.(*bundlechanges.AddServiceChange).Args.Service
+	service := resolve(p.Service, h.results)
+	change := h.changes[p.Service[1:]]
+	bundleService := change.(*bundlechanges.AddServiceChange).Params.Service
 	existing := len(status.Services[service].Units)
 	want := h.data.Services[bundleService].NumUnits
 	if existing >= want {
@@ -220,8 +220,8 @@ func (h *handler) addUnit(id string, args bundlechanges.AddUnitArgs) error {
 		return nil
 	}
 	machineSpec := ""
-	if args.To != "" {
-		machineSpec = resolve(args.To, h.results)
+	if p.To != "" {
+		machineSpec = resolve(p.To, h.results)
 		h.ctx.Infof("adding %s unit to machine %s", service, machineSpec)
 	} else {
 		h.ctx.Infof("adding %s unit to new machine", service)
@@ -240,7 +240,7 @@ func (h *handler) addUnit(id string, args bundlechanges.AddUnitArgs) error {
 }
 
 // setAnnotations sets annotations for a service or a machine.
-func (h *handler) setAnnotations(id string, args bundlechanges.SetAnnotationsArgs) error {
+func (h *handler) setAnnotations(id string, p bundlechanges.SetAnnotationsParams) error {
 	// TODO frankban: implement this.
 	return nil
 }
@@ -266,7 +266,7 @@ mainloop:
 	case *bundlechanges.AddUnitChange:
 		// We have found the "addUnit" change, which refers to the service: now
 		// look for the original "addService" change.
-		id = change.Args.Service[1:]
+		id = change.Params.Service[1:]
 		return h.changes[id].(*bundlechanges.AddServiceChange)
 	}
 	panic("unreachable")
