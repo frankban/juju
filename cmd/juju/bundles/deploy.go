@@ -140,7 +140,7 @@ func (h *handler) addMachine(id string, p bundlechanges.AddMachineParams) error 
 	existing := len(status.Services[service].Units)
 	want := h.data.Services[change.Params.Service].NumUnits
 	if existing >= want {
-		h.ctx.Infof("not creating another machine to host %s unit: %d unit(s) already present", service, existing)
+		h.ctx.Infof("not creating another machine to host %s unit: %s", service, existingUnitsMessage(existing))
 		h.results[id] = ""
 		return nil
 	}
@@ -216,15 +216,17 @@ func (h *handler) addUnit(id string, p bundlechanges.AddUnitParams) error {
 	existing := len(status.Services[service].Units)
 	want := h.data.Services[bundleService].NumUnits
 	if existing >= want {
-		h.ctx.Infof("not adding new units to service %s: %d unit(s) already present", service, existing)
+		h.ctx.Infof("not adding new units to service %s: %s", service, existingUnitsMessage(existing))
 		return nil
 	}
-	machineSpec := ""
-	if p.To != "" {
-		machineSpec = resolve(p.To, h.results)
-		h.ctx.Infof("adding %s unit to machine %s", service, machineSpec)
-	} else {
+	// Note that resolving the machine could fail (and therefore return an
+	// empty string) in the case the bundle is deployed a second time and some
+	// units are missing. In such cases, just create new machines.
+	machineSpec := resolve(p.To, h.results)
+	if machineSpec == "" {
 		h.ctx.Infof("adding %s unit to new machine", service)
+	} else {
+		h.ctx.Infof("adding %s unit to machine %s", service, machineSpec)
 	}
 	r, err := h.client.AddServiceUnits(service, 1, machineSpec)
 	if err != nil {
@@ -277,6 +279,15 @@ mainloop:
 func resolve(placeholder string, results map[string]string) string {
 	id := placeholder[1:]
 	return results[id]
+}
+
+// existingUnitsMessage returns a string message stating that the given number
+// of units already exist in the environment.
+func existingUnitsMessage(num int) string {
+	if num == 1 {
+		return "1 unit already present"
+	}
+	return fmt.Sprintf("%d units already present", num)
 }
 
 // parseEndpoint creates an endpoint from its string representation in e.
