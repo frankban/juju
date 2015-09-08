@@ -203,7 +203,7 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 		if err != nil {
 			return block.ProcessBlockedError(err, block.BlockChange)
 		}
-		if err := deployBundle(bundle, client, csClient, repoPath, conf, ctx); err != nil {
+		if err := deployBundle(bundle.Data(), client, csClient, repoPath, conf, ctx); err != nil {
 			return block.ProcessBlockedError(err, block.BlockChange)
 		}
 		ctx.Infof("deployment of bundle %q completed", url)

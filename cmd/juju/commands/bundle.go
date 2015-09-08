@@ -21,23 +21,16 @@ import (
 	"github.com/juju/juju/state/multiwatcher"
 )
 
-// deployBundle deploys the given bundle using the given API client and charm
-// store client. The deployment is not transactional, and its progress is
+// deployBundle deploys the given bundle data using the given API client and
+// charm store client. The deployment is not transactional, and its progress is
 // notified using the given command context.
-func deployBundle(bundle charm.Bundle, client *api.Client, csclient *csClient, repoPath string, conf *config.Config, ctx *cmd.Context) error {
-	return deployBundleData(bundle.Data(), client, csclient, repoPath, conf, ctx)
-}
-
-// deployBundleData deploys the given bundle data using the given API client
-// and charm store client. The deployment is not transactional, and its
-// progress is notified using the given command context.
-func deployBundleData(data *charm.BundleData, client *api.Client, csclient *csClient, repoPath string, conf *config.Config, ctx *cmd.Context) error {
+func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient, repoPath string, conf *config.Config, ctx *cmd.Context) error {
 	// TODO frankban: provide a verifyConstraints function.
 	if err := data.Verify(nil); err != nil {
 		return errors.Trace(err)
 	}
 
-	// Retrueve bundle changes.
+	// Retrieve bundle changes.
 	changes := bundlechanges.FromData(data)
 	h := &bundleHandler{
 		changes:  make(map[string]bundlechanges.Change, len(changes)),
