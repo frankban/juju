@@ -19,7 +19,6 @@ import (
 	"github.com/juju/juju/apiserver/params"
 	"github.com/juju/juju/cmd/envcmd"
 	"github.com/juju/juju/cmd/juju/block"
-	"github.com/juju/juju/cmd/juju/bundles"
 	"github.com/juju/juju/cmd/juju/service"
 	"github.com/juju/juju/constraints"
 	"github.com/juju/juju/juju/osenv"
@@ -191,26 +190,31 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 		return errors.Trace(err)
 	}
 	defer csClient.jar.Save()
-	curl, repo, err := resolveCharmURL(c.CharmName, csClient.params, ctx.AbsPath(c.RepoPath), conf)
+
+	repoPath := ctx.AbsPath(c.RepoPath)
+	url, repo, err := resolveEntityURL(c.CharmName, csClient.params, repoPath, conf)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if curl.Series == "bundle" {
-		bundle, err := repo.GetBundle(curl)
+	if url.Series == "bundle" {
+		// Deploy a bundle entity.
+		bundle, err := repo.GetBundle(url)
 		if err != nil {
 			return block.ProcessBlockedError(err, block.BlockChange)
 		}
-		if err := bundles.Deploy(bundle, client, ctx); err != nil {
+		if err := deployBundle(bundle, client, csClient, repoPath, conf, ctx); err != nil {
 			return block.ProcessBlockedError(err, block.BlockChange)
 		}
+		ctx.Infof("deployment of bundle %q completed", url)
 		return nil
 	}
 
-	curl, err = addCharmViaAPI(client, ctx, curl, repo, csClient)
+	url, err = addCharmViaAPI(client, url, repo, csClient)
 	if err != nil {
 		return block.ProcessBlockedError(err, block.BlockChange)
 	}
+	ctx.Infof("Added charm %q to the environment.", url)
 
 	if c.BumpRevision {
 		ctx.Infof("--upgrade (or -u) is deprecated and ignored; charms are always deployed with a unique revision.")
@@ -231,7 +235,7 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 	}
 	haveNetworks := len(requestedNetworks) > 0 || c.Constraints.HaveNetworks()
 
-	charmInfo, err := client.CharmInfo(curl.String())
+	charmInfo, err := client.CharmInfo(url.String())
 	if err != nil {
 		return err
 	}
@@ -275,7 +279,7 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 			c.Placement[i] = p
 		}
 		err = serviceClient.ServiceDeploy(
-			curl.String(),
+			url.String(),
 			serviceName,
 			numUnits,
 			string(configYAML),
@@ -292,7 +296,7 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 	}
 
 	err = client.ServiceDeployWithNetworks(
-		curl.String(),
+		url.String(),
 		serviceName,
 		numUnits,
 		string(configYAML),
@@ -305,7 +309,7 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 			return errors.New("cannot use --networks/--constraints networks=...: not supported by the API server")
 		}
 		err = client.ServiceDeploy(
-			curl.String(),
+			url.String(),
 			serviceName,
 			numUnits,
 			string(configYAML),
@@ -321,7 +325,7 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 	if err != nil {
 		return err
 	}
-	err = registerMeteredCharm(c.RegisterURL, state, csClient.jar, curl.String(), serviceName, client.EnvironmentUUID())
+	err = registerMeteredCharm(c.RegisterURL, state, csClient.jar, url.String(), serviceName, client.EnvironmentUUID())
 	if params.IsCodeNotImplemented(err) {
 		// The state server is too old to support metering.  Warn
 		// the user, but don't return an error.
