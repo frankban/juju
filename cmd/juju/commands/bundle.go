@@ -13,8 +13,11 @@ import (
 	"gopkg.in/yaml.v1"
 
 	"github.com/juju/juju/api"
+	"github.com/juju/juju/apiserver/params"
 	"github.com/juju/juju/constraints"
 	"github.com/juju/juju/environs/config"
+	"github.com/juju/juju/instance"
+	"github.com/juju/juju/state/multiwatcher"
 )
 
 // deploymentLogger is used to notify clients about the bundle deployment
@@ -145,7 +148,61 @@ func (h *bundleHandler) addService(id string, p bundlechanges.AddServiceParams) 
 
 // addMachine creates a new top-level machine or container in the environment.
 func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) error {
-	// TODO frankban: implement this method.
+	// Check whether the desired number of units already exist in the
+	// environment, in which case, avoid adding other machines to host those
+	// service units.
+	service := h.serviceForMachineChange(id)
+	existingUnits, err := existingUnitsForService(h.client, service)
+	if err != nil {
+		return errors.Annotatef(err, "cannot get existing units for service %q", service)
+	}
+	numExisting := len(existingUnits)
+	numWant := h.data.Services[service].NumUnits
+	if numExisting >= numWant {
+		h.log.Infof("avoid creating another machine to host %s unit: %s", service, existingUnitsMessage(numExisting))
+		// We still need to set the machine used to add this unit, as
+		// subsequent changes can depend on this one. Using one of the machines
+		// hosting units for the current service is out best guess.
+		for _, machine := range existingUnits {
+			h.results[id] = machine
+			break
+		}
+		return nil
+	}
+	cons, err := constraints.Parse(p.Constraints)
+	if err != nil {
+		// This should never happen, as the bundle is already verified.
+		return errors.Annotate(err, "invalid constraints for machine")
+	}
+	machineParams := params.AddMachineParams{
+		Constraints: cons,
+		Series:      p.Series,
+		ParentId:    p.ParentId,
+		Jobs:        []multiwatcher.MachineJob{multiwatcher.JobHostUnits},
+	}
+	if p.ContainerType == "" {
+		h.log.Infof("creating new machine for holding %s unit", service)
+	} else {
+		containerType, err := instance.ParseContainerType(p.ContainerType)
+		if err != nil {
+			return errors.Annotatef(err, "cannot create machine for hosting %s unit", service)
+		}
+		machineParams.ContainerType = containerType
+		if machineParams.ParentId == "" {
+			h.log.Infof("creating %s container in new machine for holding %s unit", p.ContainerType, service)
+		} else {
+			machineParams.ParentId = resolve(machineParams.ParentId, h.results)
+			h.log.Infof("creating %s container in machine %s for holding %s unit", p.ContainerType, machineParams.ParentId, service)
+		}
+	}
+	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
+	if err != nil {
+		return errors.Annotatef(err, "cannot create machine for hosting %s unit", service)
+	}
+	if r[0].Error != nil {
+		return errors.Trace(r[0].Error)
+	}
+	h.results[id] = r[0].Machine
 	return nil
 }
 
@@ -241,4 +298,57 @@ func resolveRelation(e string, results map[string]string) string {
 		return service
 	}
 	return fmt.Sprintf("%s:%s", service, parts[1])
+}
+
+// existingUnitsForService returns existing units for the given service name.
+// Units are returned as a map mapping unit names to the corresponding machine
+// names.
+func existingUnitsForService(client *api.Client, service string) (map[string]string, error) {
+	status, err := client.Status(nil)
+	if err != nil {
+		return nil, errors.Annotate(err, "cannot retrieve environment status")
+	}
+	units := status.Services[service].Units
+	results := make(map[string]string, len(units))
+	for name, unit := range units {
+		results[name] = unit.Machine
+	}
+	return results, nil
+}
+
+// existingUnitsMessage returns a string message stating that the given number
+// of units already exist in the environment.
+func existingUnitsMessage(num int) string {
+	if num == 1 {
+		return "1 unit already present"
+	}
+	return fmt.Sprintf("%d units already present", num)
+}
+
+// serviceForMachineChange returns the name of the service for which an
+// "addMachine" change is required. Receive the id of the "addMachine" change.
+// Adding machines is required to place units, and units belong to services.
+func (h *bundleHandler) serviceForMachineChange(id string) string {
+	var change bundlechanges.Change
+mainloop:
+	for _, change = range h.changes {
+		for _, required := range change.Requires() {
+			if required == id {
+				break mainloop
+			}
+		}
+	}
+	switch change := change.(type) {
+	case *bundlechanges.AddMachineChange:
+		// The original machine is a container, and its parent is another
+		// "addMachines" change. Search again using the parent id.
+		return h.serviceForMachineChange(change.Id())
+	case *bundlechanges.AddUnitChange:
+		// We have found the "addUnit" change, which refers to the service: now
+		// resolve the service holding the unit.
+		return resolve(change.Params.Service, h.results)
+	default:
+		panic(fmt.Sprintf("unexpected change %T", change))
+	}
+	panic("unreachable")
 }
