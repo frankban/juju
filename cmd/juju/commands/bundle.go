@@ -177,22 +177,16 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	machineParams := params.AddMachineParams{
 		Constraints: cons,
 		Series:      p.Series,
-		ParentId:    p.ParentId,
 		Jobs:        []multiwatcher.MachineJob{multiwatcher.JobHostUnits},
 	}
-	if p.ContainerType == "" {
-		h.log.Infof("creating new machine for holding %s unit", service)
-	} else {
+	if p.ContainerType != "" {
 		containerType, err := instance.ParseContainerType(p.ContainerType)
 		if err != nil {
 			return errors.Annotatef(err, "cannot create machine for hosting %s unit", service)
 		}
 		machineParams.ContainerType = containerType
-		if machineParams.ParentId == "" {
-			h.log.Infof("creating %s container in new machine for holding %s unit", p.ContainerType, service)
-		} else {
-			machineParams.ParentId = resolve(machineParams.ParentId, h.results)
-			h.log.Infof("creating %s container in machine %s for holding %s unit", p.ContainerType, machineParams.ParentId, service)
+		if p.ParentId != "" {
+			machineParams.ParentId = resolve(p.ParentId, h.results)
 		}
 	}
 	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
@@ -202,7 +196,15 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	if r[0].Error != nil {
 		return errors.Trace(r[0].Error)
 	}
-	h.results[id] = r[0].Machine
+	machine := r[0].Machine
+	if p.ContainerType == "" {
+		h.log.Infof("created new machine %s for holding %s unit", machine, service)
+	} else if p.ParentId == "" {
+		h.log.Infof("created %s container in new machine for holding %s unit", machine, service)
+	} else {
+		h.log.Infof("created %s container in machine %s for holding %s unit", machine, machineParams.ParentId, service)
+	}
+	h.results[id] = machine
 	return nil
 }
 
@@ -228,7 +230,43 @@ func (h *bundleHandler) addRelation(id string, p bundlechanges.AddRelationParams
 
 // addUnit adds a single unit to a service already present in the environment.
 func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error {
-	// TODO frankban: implement this method.
+	// Check whether the desired number of units already exist in the
+	// environment, in which case, avoid adding other units.
+	service := resolve(p.Service, h.results)
+	existingUnits, err := existingUnitsForService(h.client, service)
+	if err != nil {
+		return errors.Annotatef(err, "cannot get existing units for service %q", service)
+	}
+	numExisting := len(existingUnits)
+	numWant := h.data.Services[service].NumUnits
+	if numExisting >= numWant {
+		h.log.Infof("avoid adding new unit to service %s: %s", service, existingUnitsMessage(numExisting))
+		return nil
+	}
+	// Note that resolving the machine could fail (and therefore return an
+	// empty string) in the case the bundle is deployed a second time and some
+	// units are missing. In such cases, just create new machines.
+	machineSpec := ""
+	if p.To != "" {
+		machineSpec = resolve(p.To, h.results)
+	}
+	r, err := h.client.AddServiceUnits(service, 1, machineSpec)
+	if err != nil {
+		return errors.Annotatef(err, "cannot add unit for service %q", service)
+	}
+	unit := r[0]
+	if machineSpec == "" {
+		// Retrieve the machine on which the unit has been deployed.
+		existingUnits, err = existingUnitsForService(h.client, service)
+		if err != nil {
+			return errors.Annotatef(err, "cannot get existing units for service %q", service)
+		}
+		machineSpec = existingUnits[unit]
+		h.log.Infof("added %s unit to new machine %s", unit, machineSpec)
+	} else {
+		h.log.Infof("added %s unit to existing machine %s", unit, machineSpec)
+	}
+	h.results[id] = machineSpec
 	return nil
 }
 
