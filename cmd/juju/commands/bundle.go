@@ -182,7 +182,7 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	if p.ContainerType != "" {
 		containerType, err := instance.ParseContainerType(p.ContainerType)
 		if err != nil {
-			return errors.Annotatef(err, "cannot create machine for hosting %s unit", service)
+			return errors.Annotatef(err, "cannot create machine for hosting %q unit", service)
 		}
 		machineParams.ContainerType = containerType
 		if p.ParentId != "" {
@@ -191,7 +191,7 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	}
 	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
 	if err != nil {
-		return errors.Annotatef(err, "cannot create machine for hosting %s unit", service)
+		return errors.Annotatef(err, "cannot create machine for hosting %q unit", service)
 	}
 	if r[0].Error != nil {
 		return errors.Trace(r[0].Error)

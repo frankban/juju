@@ -235,6 +235,20 @@ func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidOptions(c *gc.C) {
 	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot set options for service "wp": option "blog-title" expected string, got 42`)
 }
 
+func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidMachineContainerType(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/wordpress-42", "wordpress")
+	_, err := s.deployBundleYAML(c, `
+        services:
+            wp:
+                charm: trusty/wordpress-42
+                num_units: 1
+                to: ["bad:1"]
+        machines:
+            1:
+    `)
+	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot create machine for hosting "wp" unit: invalid container type "bad"`)
+}
+
 func (s *deployRepoCharmStoreSuite) TestDeployBundleLocalDeployment(c *gc.C) {
 	testcharms.Repo.ClonedDirPath(s.SeriesPath, "mysql")
 	testcharms.Repo.ClonedDirPath(s.SeriesPath, "wordpress")
