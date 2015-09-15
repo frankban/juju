@@ -58,7 +58,10 @@ deployment of bundle "cs:bundle/wordpress-simple-1" completed`
 		"wordpress": {charm: "cs:trusty/wordpress-47"},
 	})
 	s.assertRelationsEstablished(c, "wordpress:db mysql:server")
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"mysql/0":     "0",
+		"wordpress/0": "1",
+	})
 }
 
 func (s *DeployCharmStoreSuite) TestDeployBundleTwice(c *gc.C) {
@@ -85,7 +88,10 @@ deployment of bundle "cs:bundle/wordpress-simple-1" completed`
 		"wordpress": {charm: "cs:trusty/wordpress-47"},
 	})
 	s.assertRelationsEstablished(c, "wordpress:db mysql:server")
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"mysql/0":     "0",
+		"wordpress/0": "1",
+	})
 }
 
 func (s *DeployCharmStoreSuite) TestDeployBundleGatedCharm(c *gc.C) {
@@ -261,7 +267,11 @@ deployment of bundle "local:bundle/example-0" completed`
 		"wordpress": {charm: "local:trusty/wordpress-3"},
 	})
 	s.assertRelationsEstablished(c, "wordpress:db mysql:server")
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"mysql/0":     "0",
+		"mysql/1":     "1",
+		"wordpress/0": "2",
+	})
 }
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleLocalAndCharmStoreCharms(c *gc.C) {
@@ -295,7 +305,10 @@ deployment of bundle "local:bundle/example-0" completed`
 		"wordpress": {charm: "cs:trusty/wordpress-42"},
 	})
 	s.assertRelationsEstablished(c, "wordpress:db mysql:server")
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"mysql/0":     "0",
+		"wordpress/0": "1",
+	})
 }
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleServiceOptions(c *gc.C) {
@@ -338,7 +351,10 @@ deployment of bundle "local:bundle/example-0" completed`
 			config: charm.Settings{"blog-title": "these are the voyages"},
 		},
 	})
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"wordpress/0":  "1",
+		"customized/0": "0",
+	})
 }
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleServiceUpgrade(c *gc.C) {
@@ -402,7 +418,10 @@ deployment of bundle "local:bundle/example-0" completed`
 			config: charm.Settings{"blog-title": "new title"},
 		},
 	})
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"up/0":        "0",
+		"wordpress/0": "1",
+	})
 }
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleServiceUpgradeFailure(c *gc.C) {
@@ -483,7 +502,12 @@ added wp/0 unit to new machine 3
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertRelationsEstablished(c, "wp:db mysql:server", "wp:db pgres:server", "wp:cache varnish:webcache")
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"mysql/0":   "0",
+		"pgres/0":   "1",
+		"varnish/0": "2",
+		"wp/0":      "3",
+	})
 }
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleNewRelations(c *gc.C) {
@@ -537,5 +561,9 @@ avoid adding new unit to service wp: 1 unit already present
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertRelationsEstablished(c, "wp:db mysql:server", "wp:cache varnish:webcache")
-	// TODO: assertUnitsCreated
+	s.assertUnitsCreated(c, map[string]string{
+		"mysql/0":   "0",
+		"varnish/0": "1",
+		"wp/0":      "2",
+	})
 }

@@ -660,6 +660,23 @@ func (s *charmStoreSuite) assertRelationsEstablished(c *gc.C, relations ...strin
 	c.Assert(established, jc.SameContents, relations)
 }
 
+// assertUnitsCreated checks that the given units have been created. The
+// expectedUnits argument maps unit names to machine names.
+func (s *charmStoreSuite) assertUnitsCreated(c *gc.C, expectedUnits map[string]string) {
+	machines, err := s.State.AllMachines()
+	c.Assert(err, jc.ErrorIsNil)
+	created := make(map[string]string)
+	for _, m := range machines {
+		id := m.Id()
+		units, err := s.State.UnitsFor(id)
+		c.Assert(err, jc.ErrorIsNil)
+		for _, u := range units {
+			created[u.Name()] = id
+		}
+	}
+	c.Assert(created, jc.DeepEquals, expectedUnits)
+}
+
 type testMetricCredentialsSetter struct {
 	assert func(string, []byte)
 }
