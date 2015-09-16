@@ -157,8 +157,7 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 		return errors.Annotatef(err, "cannot get existing units for service %q", service)
 	}
 	numExisting := len(existingUnits)
-	numWant := h.data.Services[service].NumUnits
-	if numExisting >= numWant {
+	if numExisting >= h.data.Services[service].NumUnits {
 		h.log.Infof("avoid creating another machine to host %s unit: %s", service, existingUnitsMessage(numExisting))
 		// We still need to set the machine used to add this unit, as
 		// subsequent changes can depend on this one. Using one of the machines
@@ -238,9 +237,15 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 		return errors.Annotatef(err, "cannot get existing units for service %q", service)
 	}
 	numExisting := len(existingUnits)
-	numWant := h.data.Services[service].NumUnits
-	if numExisting >= numWant {
+	if numExisting >= h.data.Services[service].NumUnits {
 		h.log.Infof("avoid adding new unit to service %s: %s", service, existingUnitsMessage(numExisting))
+		// We still need to set the machine used to add this unit, as
+		// subsequent changes can depend on this one. Using one of the machines
+		// hosting units for the current service is out best guess.
+		for _, machine := range existingUnits {
+			h.results[id] = machine
+			break
+		}
 		return nil
 	}
 	// Note that resolving the machine could fail (and therefore return an

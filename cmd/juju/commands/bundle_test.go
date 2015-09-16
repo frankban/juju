@@ -584,9 +584,8 @@ deployment of bundle "local:bundle/example-0" completed`
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleMachinesUnitsPlacement(c *gc.C) {
 	testcharms.UploadCharm(c, s.client, "trusty/wordpress-0", "wordpress")
-	testcharms.UploadCharm(c, s.client, "trusty/wordpress-1", "wordpress")
 	testcharms.UploadCharm(c, s.client, "trusty/mysql-2", "mysql")
-	output, err := s.deployBundleYAML(c, `
+	content := `
         services:
             wp:
                 charm: cs:trusty/wordpress-0
@@ -606,7 +605,8 @@ func (s *deployRepoCharmStoreSuite) TestDeployBundleMachinesUnitsPlacement(c *gc
             1:
                 series: trusty
             2:
-    `)
+    `
+	output, err := s.deployBundleYAML(c, content)
 	c.Assert(err, jc.ErrorIsNil)
 	expectedOutput := `
 added charm cs:trusty/mysql-2
@@ -640,54 +640,31 @@ deployment of bundle "local:bundle/example-0" completed`
 		"wp/1":  "1/lxc/0",
 	})
 
-	// Redeploy the same bundle after adding one more unit to mysqk and
-	// upgrading wordpress charm.
-	output, err = s.deployBundleYAML(c, `
-        services:
-            wp:
-                charm: cs:trusty/wordpress-0
-                num_units: 2
-                to:
-                    - 1
-                    - lxc:2
-            sql:
-                charm: cs:trusty/mysql
-                num_units: 3
-                to:
-                    - lxc:wp/0
-                    - new
-        machines:
-            1:
-                series: trusty
-            2:
-    `)
+	// Redeploy the same bundle again.
+	output, err = s.deployBundleYAML(c, content)
 	c.Assert(err, jc.ErrorIsNil)
 	expectedOutput = `
-added charm cs:trusty/mysql-1
-reusing service mysql (charm: cs:trusty/mysql-1)
-added charm cs:trusty/varnish-3
-reusing service varnish (charm: cs:trusty/varnish-3)
+added charm cs:trusty/mysql-2
+reusing service sql (charm: cs:trusty/mysql-2)
 added charm cs:trusty/wordpress-0
 reusing service wp (charm: cs:trusty/wordpress-0)
-wp:db and mysql:server are already related
-related varnish:webcache and wp:cache
-avoid adding new unit to service mysql: 1 unit already present
-avoid adding new unit to service varnish: 1 unit already present
-avoid adding new unit to service wp: 1 unit already present
+service wp configured
+avoid creating another machine to host wp unit: 2 units already present
+avoid creating another machine to host wp unit: 2 units already present
+avoid adding new unit to service wp: 2 units already present
+avoid creating another machine to host sql unit: 2 units already present
+avoid creating another machine to host sql unit: 2 units already present
+avoid creating another machine to host wp unit: 2 units already present
+avoid adding new unit to service sql: 2 units already present
+avoid adding new unit to service sql: 2 units already present
+avoid adding new unit to service wp: 2 units already present
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
-	s.assertServicesDeployed(c, map[string]serviceInfo{
-		"up": {charm: "cs:vivid/upgrade-2"},
-		"wordpress": {
-			charm:  "cs:trusty/wordpress-42",
-			config: charm.Settings{"blog-title": "new title"},
-		},
-	})
-	s.assertRelationsEstablished(c, "wp:db mysql:server", "wp:cache varnish:webcache")
 	s.assertUnitsCreated(c, map[string]string{
-		"mysql/0":   "0",
-		"varnish/0": "1",
-		"wp/0":      "2",
+		"sql/0": "0/lxc/0",
+		"sql/1": "2",
+		"wp/0":  "0",
+		"wp/1":  "1/lxc/0",
 	})
 }
 
