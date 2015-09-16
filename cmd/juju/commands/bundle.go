@@ -38,6 +38,13 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 		return errors.Annotate(err, "cannot deploy bundle")
 	}
 
+	// Instantiate a watcher used to check the environment status.
+	watcher, err := client.WatchAll()
+	if err != nil {
+		return errors.Annotate(err, "cannot watch environment")
+	}
+	defer watcher.Stop()
+
 	// Retrieve bundle changes.
 	changes := bundlechanges.FromData(data)
 	h := &bundleHandler{
@@ -49,13 +56,13 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 		conf:     conf,
 		log:      log,
 		data:     data,
+		watcher:  watcher,
 	}
 	for _, change := range changes {
 		h.changes[change.Id()] = change
 	}
 
 	// Deploy the bundle.
-	var err error
 	for _, change := range changes {
 		switch change := change.(type) {
 		case *bundlechanges.AddCharmChange:
@@ -80,6 +87,8 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 	return nil
 }
 
+type serviceUnitStatus map[string]map[string]string
+
 type bundleHandler struct {
 	changes  map[string]bundlechanges.Change
 	results  map[string]string
@@ -89,6 +98,8 @@ type bundleHandler struct {
 	conf     *config.Config
 	log      deploymentLogger
 	data     *charm.BundleData
+	watcher  *api.AllWatcher
+	status   serviceUnitStatus
 }
 
 // addCharm adds a charm to the environment.
@@ -151,18 +162,15 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	// Check whether the desired number of units already exist in the
 	// environment, in which case, avoid adding other machines to host those
 	// service units.
+	h.wait(nil)
 	service := h.serviceForMachineChange(id)
-	existingUnits, err := existingUnitsForService(h.client, service)
-	if err != nil {
-		return errors.Annotatef(err, "cannot get existing units for service %q", service)
-	}
-	numExisting := len(existingUnits)
+	numExisting := len(h.status[service])
 	if numExisting >= h.data.Services[service].NumUnits {
 		h.log.Infof("avoid creating another machine to host %s unit: %s", service, existingUnitsMessage(numExisting))
 		// We still need to set the machine used to add this unit, as
 		// subsequent changes can depend on this one. Using one of the machines
 		// hosting units for the current service is out best guess.
-		for _, machine := range existingUnits {
+		for _, machine := range h.status[service] {
 			h.results[id] = machine
 			break
 		}
@@ -231,18 +239,15 @@ func (h *bundleHandler) addRelation(id string, p bundlechanges.AddRelationParams
 func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error {
 	// Check whether the desired number of units already exist in the
 	// environment, in which case, avoid adding other units.
+	h.wait(nil)
 	service := resolve(p.Service, h.results)
-	existingUnits, err := existingUnitsForService(h.client, service)
-	if err != nil {
-		return errors.Annotatef(err, "cannot get existing units for service %q", service)
-	}
-	numExisting := len(existingUnits)
+	numExisting := len(h.status[service])
 	if numExisting >= h.data.Services[service].NumUnits {
 		h.log.Infof("avoid adding new unit to service %s: %s", service, existingUnitsMessage(numExisting))
 		// We still need to set the machine used to add this unit, as
 		// subsequent changes can depend on this one. Using one of the machines
 		// hosting units for the current service is out best guess.
-		for _, machine := range existingUnits {
+		for _, machine := range h.status[service] {
 			h.results[id] = machine
 			break
 		}
@@ -260,18 +265,16 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 		return errors.Annotatef(err, "cannot add unit for service %q", service)
 	}
 	unit := r[0]
+	h.wait(func(status serviceUnitStatus) bool {
+		return status[service][unit] != ""
+	})
+	placement := h.status[service][unit]
 	if machineSpec == "" {
-		// Retrieve the machine on which the unit has been deployed.
-		existingUnits, err = existingUnitsForService(h.client, service)
-		if err != nil {
-			return errors.Annotatef(err, "cannot get existing units for service %q", service)
-		}
-		machineSpec = existingUnits[unit]
-		h.log.Infof("added %s unit to new machine %s", unit, machineSpec)
+		h.log.Infof("added %s unit to new machine %s", unit, placement)
 	} else {
-		h.log.Infof("added %s unit to machine %s", unit, machineSpec)
+		h.log.Infof("added %s unit to machine %s", unit, placement)
 	}
-	h.results[id] = machineSpec
+	h.results[id] = placement
 	return nil
 }
 
@@ -346,22 +349,6 @@ func resolveRelation(e string, results map[string]string) string {
 	return fmt.Sprintf("%s:%s", service, parts[1])
 }
 
-// existingUnitsForService returns existing units for the given service name.
-// Units are returned as a map mapping unit names to the corresponding machine
-// names.
-func existingUnitsForService(client *api.Client, service string) (map[string]string, error) {
-	status, err := client.Status(nil)
-	if err != nil {
-		return nil, errors.Annotate(err, "cannot retrieve environment status")
-	}
-	units := status.Services[service].Units
-	results := make(map[string]string, len(units))
-	for name, unit := range units {
-		results[name] = unit.Machine
-	}
-	return results, nil
-}
-
 // existingUnitsMessage returns a string message stating that the given number
 // of units already exist in the environment.
 func existingUnitsMessage(num int) string {
@@ -397,4 +384,26 @@ mainloop:
 		panic(fmt.Sprintf("unexpected change %T", change))
 	}
 	panic("unreachable")
+}
+
+func (h *bundleHandler) wait(predicate func(serviceUnitStatus) bool) error {
+	for h.status == nil || (predicate != nil && !predicate(h.status)) {
+		if h.status == nil {
+			h.status = make(map[string]map[string]string, len(h.data.Services))
+		}
+		delta, err := h.watcher.Next()
+		if err != nil {
+			return errors.Annotate(err, "cannot get environment changes")
+		}
+		for _, d := range delta {
+			switch entity := d.Entity.(type) {
+			case *multiwatcher.UnitInfo:
+				if h.status[entity.Service] == nil {
+					h.status[entity.Service] = make(map[string]string)
+				}
+				h.status[entity.Service][entity.Name] = entity.MachineId
+			}
+		}
+	}
+	return nil
 }

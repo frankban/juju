@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/juju/juju/cmd/envcmd"
 	"github.com/juju/juju/juju/testing"
+	"github.com/juju/juju/state/watcher"
 	"github.com/juju/juju/testcharms"
 	coretesting "github.com/juju/juju/testing"
 )
@@ -127,6 +129,7 @@ var _ = gc.Suite(&deployRepoCharmStoreSuite{})
 func (s *deployRepoCharmStoreSuite) SetUpSuite(c *gc.C) {
 	s.charmStoreSuite.SetUpSuite(c)
 	s.BaseRepoSuite.SetUpSuite(c)
+
 }
 
 func (s *deployRepoCharmStoreSuite) TearDownSuite(c *gc.C) {
@@ -142,6 +145,7 @@ func (s *deployRepoCharmStoreSuite) SetUpTest(c *gc.C) {
 func (s *deployRepoCharmStoreSuite) TearDownTest(c *gc.C) {
 	s.BaseRepoSuite.TearDownTest(c)
 	s.charmStoreSuite.TearDownTest(c)
+	s.PatchValue(&watcher.Period, 10*time.Second)
 }
 
 // deployBundleYAML uses the given bundle content to create a bundle in the
