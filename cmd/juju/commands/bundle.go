@@ -264,7 +264,7 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 		machineSpec = existingUnits[unit]
 		h.log.Infof("added %s unit to new machine %s", unit, machineSpec)
 	} else {
-		h.log.Infof("added %s unit to existing machine %s", unit, machineSpec)
+		h.log.Infof("added %s unit to machine %s", unit, machineSpec)
 	}
 	h.results[id] = machineSpec
 	return nil
