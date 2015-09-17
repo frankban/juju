@@ -5,10 +5,12 @@ package commands
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"github.com/juju/bundlechanges"
 	"github.com/juju/errors"
+	"github.com/juju/names"
 	"gopkg.in/juju/charm.v6-unstable"
 	"gopkg.in/yaml.v1"
 
@@ -38,25 +40,43 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 		return errors.Annotate(err, "cannot deploy bundle")
 	}
 
-	// Instantiate a watcher used to check the environment status.
+	// Retrieve bundle changes.
+	changes := bundlechanges.FromData(data)
+	numChanges := len(changes)
+
+	// Initialize the unit status.
+	status, err := client.Status(nil)
+	if err != nil {
+		return errors.Annotate(err, "cannot get environment status")
+	}
+	unitStatus := make(map[string]string, numChanges)
+	for _, serviceData := range status.Services {
+		for unit, unitData := range serviceData.Units {
+			unitStatus[unit] = unitData.Machine
+		}
+	}
+
+	// Instantiate a watcher used to follow the deployment progress.
 	watcher, err := client.WatchAll()
 	if err != nil {
 		return errors.Annotate(err, "cannot watch environment")
 	}
 	defer watcher.Stop()
 
-	// Retrieve bundle changes.
-	changes := bundlechanges.FromData(data)
+	// Instantiate the bundle handler.
 	h := &bundleHandler{
-		changes:  make(map[string]bundlechanges.Change, len(changes)),
-		results:  make(map[string]string, len(changes)),
-		client:   client,
-		csclient: csclient,
-		repoPath: repoPath,
-		conf:     conf,
-		log:      log,
-		data:     data,
-		watcher:  watcher,
+		changes:         make(map[string]bundlechanges.Change, numChanges),
+		results:         make(map[string]string, numChanges),
+		client:          client,
+		csclient:        csclient,
+		repoPath:        repoPath,
+		conf:            conf,
+		log:             log,
+		data:            data,
+		unitStatus:      unitStatus,
+		ignoredMachines: make(map[string]bool, len(data.Services)),
+		ignoredUnits:    make(map[string]bool, len(data.Services)),
+		watcher:         watcher,
 	}
 	for _, change := range changes {
 		h.changes[change.Id()] = change
@@ -87,19 +107,46 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 	return nil
 }
 
-type serviceUnitStatus map[string]map[string]string
-
+// bundleHandler provides helper and the state required to deploy a bundle.
 type bundleHandler struct {
-	changes  map[string]bundlechanges.Change
-	results  map[string]string
-	client   *api.Client
+	// changes maps bundle change ids with the actual changes.
+	changes map[string]bundlechanges.Change
+	// results collects data resulting from applying changes. Keys are
+	// identifier for changes, values result from interacting with the
+	// environment, and are stored so that they can be potentially reused
+	// later, for instance for resolving a dynamic placeholder included in
+	// a change. Specifically, the following values are stored:
+	// - when adding a charm, the fully resolved charm is stored;
+	// - when deploying a service, the service name is stored;
+	// - when adding a machine, the resulting machine id is stored;
+	// - when adding a unit, either the id of the machine holding the unit or
+	//   the unit name can be stored.
+	results map[string]string
+	// client is used to interact with the environment.
+	client *api.Client
+	// csclient is used to retrieve charms from the charm store.
 	csclient *csClient
+	// repoPath is used to retrieve charms from a local repository.
 	repoPath string
-	conf     *config.Config
-	log      deploymentLogger
-	data     *charm.BundleData
-	watcher  *api.AllWatcher
-	status   serviceUnitStatus
+	// conf holds the environment configuration.
+	conf *config.Config
+	// log is used to output messages to the user, so that the user can keep
+	// track of the bundle deployment process.
+	log deploymentLogger
+	// data is the original bundle data that we want to deploy.
+	data *charm.BundleData
+	// unitStatus reflects the environment status and maps unit names to their
+	// corresponding machine identifiers. This is keep updated by both change
+	// handlers (addCharm, addService etc.) and by updateUnitStatus.
+	unitStatus map[string]string
+	// ignoredMachines and ignoredUnits map service names to whether a machine
+	// or a unit creation has been skipped during the bundle deployment because
+	// the current status of the environment does not require them to be added.
+	ignoredMachines map[string]bool
+	ignoredUnits    map[string]bool
+	// watcher holds an environment mega-watcher used to keep the environment
+	// status up to date.
+	watcher *api.AllWatcher
 }
 
 // addCharm adds a charm to the environment.
@@ -162,18 +209,17 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	// Check whether the desired number of units already exist in the
 	// environment, in which case, avoid adding other machines to host those
 	// service units.
-	h.wait(nil)
 	service := h.serviceForMachineChange(id)
-	numExisting := len(h.status[service])
+	existingMachines := h.machinesForService(service)
+	numExisting := len(existingMachines)
 	if numExisting >= h.data.Services[service].NumUnits {
-		h.log.Infof("avoid creating another machine to host %s unit: %s", service, existingUnitsMessage(numExisting))
-		// We still need to set the machine used to add this unit, as
-		// subsequent changes can depend on this one. Using one of the machines
-		// hosting units for the current service is out best guess.
-		for _, machine := range h.status[service] {
-			h.results[id] = machine
-			break
+		if !h.ignoredMachines[service] {
+			h.ignoredMachines[service] = true
+			h.log.Infof("avoid creating other machines to host %s units: %s", service, existingUnitsMessage(numExisting))
 		}
+		// We still need to set the resulting machine id, as subsequent changes
+		// can depend on this one. This is our best guess for now.
+		h.results[id] = existingMachines[rand.Intn(numExisting)]
 		return nil
 	}
 	cons, err := constraints.Parse(p.Constraints)
@@ -193,7 +239,10 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 		}
 		machineParams.ContainerType = containerType
 		if p.ParentId != "" {
-			machineParams.ParentId = resolve(p.ParentId, h.results)
+			machineParams.ParentId, err = h.resolveMachine(p.ParentId)
+			if err != nil {
+				return errors.Annotatef(err, "cannot retrieve parent placement for %q unit", service)
+			}
 		}
 	}
 	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
@@ -239,18 +288,18 @@ func (h *bundleHandler) addRelation(id string, p bundlechanges.AddRelationParams
 func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error {
 	// Check whether the desired number of units already exist in the
 	// environment, in which case, avoid adding other units.
-	h.wait(nil)
 	service := resolve(p.Service, h.results)
-	numExisting := len(h.status[service])
+	existingMachines := h.machinesForService(service)
+	numExisting := len(existingMachines)
 	if numExisting >= h.data.Services[service].NumUnits {
-		h.log.Infof("avoid adding new unit to service %s: %s", service, existingUnitsMessage(numExisting))
+		if !h.ignoredUnits[service] {
+			h.ignoredUnits[service] = true
+			h.log.Infof("avoid adding new units to service %s: %s", service, existingUnitsMessage(numExisting))
+		}
 		// We still need to set the machine used to add this unit, as
 		// subsequent changes can depend on this one. Using one of the machines
 		// hosting units for the current service is out best guess.
-		for _, machine := range h.status[service] {
-			h.results[id] = machine
-			break
-		}
+		h.results[id] = existingMachines[rand.Intn(numExisting)]
 		return nil
 	}
 	// Note that resolving the machine could fail (and therefore return an
@@ -258,23 +307,24 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 	// units are missing. In such cases, just create new machines.
 	machineSpec := ""
 	if p.To != "" {
-		machineSpec = resolve(p.To, h.results)
+		var err error
+		if machineSpec, err = h.resolveMachine(p.To); err != nil {
+			return errors.Annotatef(err, "cannot retrieve placement for %q unit", service)
+		}
 	}
 	r, err := h.client.AddServiceUnits(service, 1, machineSpec)
 	if err != nil {
 		return errors.Annotatef(err, "cannot add unit for service %q", service)
 	}
 	unit := r[0]
-	h.wait(func(status serviceUnitStatus) bool {
-		return status[service][unit] != ""
-	})
-	placement := h.status[service][unit]
 	if machineSpec == "" {
-		h.log.Infof("added %s unit to new machine %s", unit, placement)
+		h.log.Infof("added %s unit to new machine", unit)
+		h.results[id] = unit
 	} else {
-		h.log.Infof("added %s unit to machine %s", unit, placement)
+		h.log.Infof("added %s unit to machine %s", unit, machineSpec)
+		h.results[id] = machineSpec
 	}
-	h.results[id] = placement
+	h.unitStatus[unit] = machineSpec
 	return nil
 }
 
@@ -282,6 +332,101 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 func (h *bundleHandler) setAnnotations(id string, p bundlechanges.SetAnnotationsParams) error {
 	// TODO frankban: implement this method.
 	return nil
+}
+
+// serviceForMachineChange returns the name of the service for which an
+// "addMachine" change is required. Receive the id of the "addMachine" change.
+// Adding machines is required to place units, and units belong to services.
+func (h *bundleHandler) serviceForMachineChange(id string) string {
+	var change bundlechanges.Change
+mainloop:
+	for _, change = range h.changes {
+		for _, required := range change.Requires() {
+			if required == id {
+				break mainloop
+			}
+		}
+	}
+	switch change := change.(type) {
+	case *bundlechanges.AddMachineChange:
+		// The original machine is a container, and its parent is another
+		// "addMachines" change. Search again using the parent id.
+		return h.serviceForMachineChange(change.Id())
+	case *bundlechanges.AddUnitChange:
+		// We have found the "addUnit" change, which refers to the service: now
+		// resolve the service holding the unit.
+		return resolve(change.Params.Service, h.results)
+	default:
+		panic(fmt.Sprintf("unexpected change %T", change))
+	}
+	panic("unreachable")
+}
+
+func (h *bundleHandler) updateUnitStatus() error {
+	delta, err := h.watcher.Next()
+	if err != nil {
+		return errors.Annotate(err, "cannot update environment status")
+	}
+	for _, d := range delta {
+		switch entity := d.Entity.(type) {
+		case *multiwatcher.UnitInfo:
+			h.unitStatus[entity.Name] = entity.MachineId
+		}
+	}
+	return nil
+}
+
+func (h *bundleHandler) machinesForService(service string) []string {
+	machines := make([]string, 0, len(h.unitStatus))
+	for unit, machine := range h.unitStatus {
+		svc, err := names.UnitService(unit)
+		if err != nil {
+			panic(err)
+		}
+		if svc == service {
+			machines = append(machines, machine)
+		}
+	}
+	return machines
+}
+
+func (h *bundleHandler) resolveMachine(m string) (string, error) {
+	machineOrUnit := resolve(m, h.results)
+	if !names.IsValidUnit(machineOrUnit) {
+		return machineOrUnit, nil
+	}
+	for h.unitStatus[machineOrUnit] == "" {
+		if err := h.updateUnitStatus(); err != nil {
+			return "", errors.Annotate(err, "cannot resolve machine")
+		}
+	}
+	return h.unitStatus[machineOrUnit], nil
+}
+
+// resolveRelation returns the relation name resolving the included service
+// placeholder.
+func resolveRelation(e string, results map[string]string) string {
+	parts := strings.SplitN(e, ":", 2)
+	service := resolve(parts[0], results)
+	if len(parts) == 1 {
+		return service
+	}
+	return fmt.Sprintf("%s:%s", service, parts[1])
+}
+
+// resolve returns the real entity name for the bundle entity (for instance a
+// service or a machine) with the given placeholder id.
+// A placeholder id is a string like "$deploy-42" or "$addCharm-2", indicating
+// the results of a previously applied change. It always starts with a dollar
+// sign, followed by the identifier of the referred change. A change id is a
+// string indicating the action type ("deploy", "addRelation" etc.), followed
+// by a unique incremental number.
+func resolve(placeholder string, results map[string]string) string {
+	if !strings.HasPrefix(placeholder, "$") {
+		panic(`placeholder does not start with "$"`)
+	}
+	id := placeholder[1:]
+	return results[id]
 }
 
 // upgradeCharm upgrades the charm for the given service to the given charm id.
@@ -323,32 +468,6 @@ func setServiceOptions(client *api.Client, service string, options map[string]in
 	return nil
 }
 
-// resolve returns the real entity name for the bundle entity (for instance a
-// service or a machine) with the given placeholder id.
-// A placeholder id is a string like "$deploy-42" or "$addCharm-2", indicating
-// the results of a previously applied change. It always starts with a dollar
-// sign, followed by the identifier of the referred change. A change id is a
-// string indicating the action type ("deploy", "addRelation" etc.), followed
-// by a unique incremental number.
-func resolve(placeholder string, results map[string]string) string {
-	if !strings.HasPrefix(placeholder, "$") {
-		panic(`placeholder does not start with "$"`)
-	}
-	id := placeholder[1:]
-	return results[id]
-}
-
-// resolveRelation returns the relation name resolving the included service
-// placeholder.
-func resolveRelation(e string, results map[string]string) string {
-	parts := strings.SplitN(e, ":", 2)
-	service := resolve(parts[0], results)
-	if len(parts) == 1 {
-		return service
-	}
-	return fmt.Sprintf("%s:%s", service, parts[1])
-}
-
 // existingUnitsMessage returns a string message stating that the given number
 // of units already exist in the environment.
 func existingUnitsMessage(num int) string {
@@ -356,54 +475,4 @@ func existingUnitsMessage(num int) string {
 		return "1 unit already present"
 	}
 	return fmt.Sprintf("%d units already present", num)
-}
-
-// serviceForMachineChange returns the name of the service for which an
-// "addMachine" change is required. Receive the id of the "addMachine" change.
-// Adding machines is required to place units, and units belong to services.
-func (h *bundleHandler) serviceForMachineChange(id string) string {
-	var change bundlechanges.Change
-mainloop:
-	for _, change = range h.changes {
-		for _, required := range change.Requires() {
-			if required == id {
-				break mainloop
-			}
-		}
-	}
-	switch change := change.(type) {
-	case *bundlechanges.AddMachineChange:
-		// The original machine is a container, and its parent is another
-		// "addMachines" change. Search again using the parent id.
-		return h.serviceForMachineChange(change.Id())
-	case *bundlechanges.AddUnitChange:
-		// We have found the "addUnit" change, which refers to the service: now
-		// resolve the service holding the unit.
-		return resolve(change.Params.Service, h.results)
-	default:
-		panic(fmt.Sprintf("unexpected change %T", change))
-	}
-	panic("unreachable")
-}
-
-func (h *bundleHandler) wait(predicate func(serviceUnitStatus) bool) error {
-	for h.status == nil || (predicate != nil && !predicate(h.status)) {
-		if h.status == nil {
-			h.status = make(map[string]map[string]string, len(h.data.Services))
-		}
-		delta, err := h.watcher.Next()
-		if err != nil {
-			return errors.Annotate(err, "cannot get environment changes")
-		}
-		for _, d := range delta {
-			switch entity := d.Entity.(type) {
-			case *multiwatcher.UnitInfo:
-				if h.status[entity.Service] == nil {
-					h.status[entity.Service] = make(map[string]string)
-				}
-				h.status[entity.Service][entity.Name] = entity.MachineId
-			}
-		}
-	}
-	return nil
 }

@@ -50,8 +50,8 @@ service mysql deployed (charm: cs:trusty/mysql-42)
 added charm cs:trusty/wordpress-47
 service wordpress deployed (charm: cs:trusty/wordpress-47)
 related wordpress:db and mysql:server
-added mysql/0 unit to new machine 0
-added wordpress/0 unit to new machine 1
+added mysql/0 unit to new machine
+added wordpress/0 unit to new machine
 deployment of bundle "cs:bundle/wordpress-simple-1" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "cs:trusty/mysql-42", "cs:trusty/wordpress-47")
@@ -80,8 +80,8 @@ reusing service mysql (charm: cs:trusty/mysql-42)
 added charm cs:trusty/wordpress-47
 reusing service wordpress (charm: cs:trusty/wordpress-47)
 wordpress:db and mysql:server are already related
-avoid adding new unit to service mysql: 1 unit already present
-avoid adding new unit to service wordpress: 1 unit already present
+avoid adding new units to service mysql: 1 unit already present
+avoid adding new units to service wordpress: 1 unit already present
 deployment of bundle "cs:bundle/wordpress-simple-1" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "cs:trusty/mysql-42", "cs:trusty/wordpress-47")
@@ -138,6 +138,7 @@ func (s *deployRepoCharmStoreSuite) TearDownSuite(c *gc.C) {
 }
 
 func (s *deployRepoCharmStoreSuite) SetUpTest(c *gc.C) {
+	s.PatchValue(&watcher.Period, 10*time.Millisecond)
 	s.charmStoreSuite.SetUpTest(c)
 	s.BaseRepoSuite.SetUpTest(c)
 }
@@ -274,9 +275,9 @@ service mysql deployed (charm: local:trusty/mysql-1)
 added charm local:trusty/wordpress-3
 service wordpress deployed (charm: local:trusty/wordpress-3)
 related wordpress:db and mysql:server
-added mysql/0 unit to new machine 0
-added mysql/1 unit to new machine 1
-added wordpress/0 unit to new machine 2
+added mysql/0 unit to new machine
+added mysql/1 unit to new machine
+added wordpress/0 unit to new machine
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "local:trusty/mysql-1", "local:trusty/wordpress-3")
@@ -313,8 +314,8 @@ service mysql deployed (charm: local:trusty/mysql-1)
 added charm cs:trusty/wordpress-42
 service wordpress deployed (charm: cs:trusty/wordpress-42)
 related wordpress:db and mysql:server
-added mysql/0 unit to new machine 0
-added wordpress/0 unit to new machine 1
+added mysql/0 unit to new machine
+added wordpress/0 unit to new machine
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "local:trusty/mysql-1", "cs:trusty/wordpress-42")
@@ -354,8 +355,8 @@ service customized configured
 added charm cs:trusty/wordpress-42
 service wordpress deployed (charm: cs:trusty/wordpress-42)
 service wordpress configured
-added customized/0 unit to new machine 0
-added wordpress/0 unit to new machine 1
+added customized/0 unit to new machine
+added wordpress/0 unit to new machine
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "cs:precise/dummy-0", "cs:trusty/wordpress-42")
@@ -399,8 +400,8 @@ service up deployed (charm: cs:vivid/upgrade-1)
 added charm cs:trusty/wordpress-42
 service wordpress deployed (charm: cs:trusty/wordpress-42)
 service wordpress configured
-added up/0 unit to new machine 0
-added wordpress/0 unit to new machine 1
+added up/0 unit to new machine
+added wordpress/0 unit to new machine
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "cs:vivid/upgrade-1", "cs:trusty/wordpress-42")
@@ -424,8 +425,8 @@ upgraded charm for existing service up (from cs:vivid/upgrade-1 to cs:vivid/upgr
 added charm cs:trusty/wordpress-42
 reusing service wordpress (charm: cs:trusty/wordpress-42)
 service wordpress configured
-avoid adding new unit to service up: 1 unit already present
-avoid adding new unit to service wordpress: 1 unit already present
+avoid adding new units to service up: 1 unit already present
+avoid adding new units to service wordpress: 1 unit already present
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertCharmsUplodaded(c, "cs:vivid/upgrade-1", "cs:vivid/upgrade-2", "cs:trusty/wordpress-42")
@@ -513,10 +514,10 @@ service wp deployed (charm: cs:trusty/wordpress-0)
 related wp:db and mysql:server
 related wp:db and pgres:server
 related varnish:webcache and wp:cache
-added mysql/0 unit to new machine 0
-added pgres/0 unit to new machine 1
-added varnish/0 unit to new machine 2
-added wp/0 unit to new machine 3
+added mysql/0 unit to new machine
+added pgres/0 unit to new machine
+added varnish/0 unit to new machine
+added wp/0 unit to new machine
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertRelationsEstablished(c, "wp:db mysql:server", "wp:db pgres:server", "wp:cache varnish:webcache")
@@ -573,9 +574,9 @@ added charm cs:trusty/wordpress-0
 reusing service wp (charm: cs:trusty/wordpress-0)
 wp:db and mysql:server are already related
 related varnish:webcache and wp:cache
-avoid adding new unit to service mysql: 1 unit already present
-avoid adding new unit to service varnish: 1 unit already present
-avoid adding new unit to service wp: 1 unit already present
+avoid adding new units to service mysql: 1 unit already present
+avoid adding new units to service varnish: 1 unit already present
+avoid adding new units to service wp: 1 unit already present
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertRelationsEstablished(c, "wp:db mysql:server", "wp:cache varnish:webcache")
@@ -653,15 +654,10 @@ reusing service sql (charm: cs:trusty/mysql-2)
 added charm cs:trusty/wordpress-0
 reusing service wp (charm: cs:trusty/wordpress-0)
 service wp configured
-avoid creating another machine to host wp unit: 2 units already present
-avoid creating another machine to host wp unit: 2 units already present
-avoid adding new unit to service wp: 2 units already present
-avoid creating another machine to host sql unit: 2 units already present
-avoid creating another machine to host sql unit: 2 units already present
-avoid creating another machine to host wp unit: 2 units already present
-avoid adding new unit to service sql: 2 units already present
-avoid adding new unit to service sql: 2 units already present
-avoid adding new unit to service wp: 2 units already present
+avoid creating other machines to host wp units: 2 units already present
+avoid adding new units to service wp: 2 units already present
+avoid creating other machines to host sql units: 2 units already present
+avoid adding new units to service sql: 2 units already present
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
 	s.assertUnitsCreated(c, map[string]string{

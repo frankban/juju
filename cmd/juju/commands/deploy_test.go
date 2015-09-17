@@ -454,8 +454,8 @@ service mysql deployed (charm: cs:trusty/mysql-0)
 added charm cs:trusty/wordpress-1
 service wordpress deployed (charm: cs:trusty/wordpress-1)
 related wordpress:db and mysql:server
-added mysql/0 unit to new machine 4
-added wordpress/0 unit to new machine 5
+added mysql/0 unit to new machine
+added wordpress/0 unit to new machine
 deployment of bundle "cs:~bob/bundle/wordpress-simple1-42" completed`,
 }, {
 	about:        "non-public bundle, success",
@@ -468,8 +468,8 @@ reusing service mysql (charm: cs:trusty/mysql-0)
 added charm cs:trusty/wordpress-1
 reusing service wordpress (charm: cs:trusty/wordpress-1)
 wordpress:db and mysql:server are already related
-avoid adding new unit to service mysql: 1 unit already present
-avoid adding new unit to service wordpress: 1 unit already present
+avoid adding new units to service mysql: 1 unit already present
+avoid adding new units to service wordpress: 1 unit already present
 deployment of bundle "cs:~bob/bundle/wordpress-simple2-0" completed`,
 }, {
 	about:        "non-public bundle, access denied",
