@@ -107,7 +107,7 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 	return nil
 }
 
-// bundleHandler provides helper and the state required to deploy a bundle.
+// bundleHandler provides helpers and the state required to deploy a bundle.
 type bundleHandler struct {
 	// changes maps bundle change ids with the actual changes.
 	changes map[string]bundlechanges.Change
@@ -131,7 +131,7 @@ type bundleHandler struct {
 	// conf holds the environment configuration.
 	conf *config.Config
 	// log is used to output messages to the user, so that the user can keep
-	// track of the bundle deployment process.
+	// track of the bundle deployment progress.
 	log deploymentLogger
 	// data is the original bundle data that we want to deploy.
 	data *charm.BundleData
@@ -302,9 +302,6 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 		h.results[id] = existingMachines[rand.Intn(numExisting)]
 		return nil
 	}
-	// Note that resolving the machine could fail (and therefore return an
-	// empty string) in the case the bundle is deployed a second time and some
-	// units are missing. In such cases, just create new machines.
 	machineSpec := ""
 	if p.To != "" {
 		var err error
@@ -319,11 +316,17 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 	unit := r[0]
 	if machineSpec == "" {
 		h.log.Infof("added %s unit to new machine", unit)
+		// In this case, the unit name is stored in results instead of the
+		// machine id, which is lazily evaluated later only if required.
+		// This way we avoid waiting for watcher updates.
 		h.results[id] = unit
 	} else {
 		h.log.Infof("added %s unit to machine %s", unit, machineSpec)
 		h.results[id] = machineSpec
 	}
+	// Note that the machineSpec can be empty for now, resulting in a partially
+	// incomplete unit status. That's ok as the missing info is provided later
+	// when it is required.
 	h.unitStatus[unit] = machineSpec
 	return nil
 }
@@ -335,8 +338,9 @@ func (h *bundleHandler) setAnnotations(id string, p bundlechanges.SetAnnotations
 }
 
 // serviceForMachineChange returns the name of the service for which an
-// "addMachine" change is required. Receive the id of the "addMachine" change.
-// Adding machines is required to place units, and units belong to services.
+// "addMachine" change is required, as adding machines is required to place
+// units, and units belong to services.
+// Receive the id of the "addMachine" change.
 func (h *bundleHandler) serviceForMachineChange(id string) string {
 	var change bundlechanges.Change
 mainloop:
@@ -362,6 +366,8 @@ mainloop:
 	panic("unreachable")
 }
 
+// updateUnitStatus uses the mega-watcher to update units and machines info
+// (h.unitStatus) so that it reflects the current environment status.
 func (h *bundleHandler) updateUnitStatus() error {
 	delta, err := h.watcher.Next()
 	if err != nil {
@@ -376,6 +382,8 @@ func (h *bundleHandler) updateUnitStatus() error {
 	return nil
 }
 
+// machinesForService return the ids of the machines holding units belonging to
+// the given service.
 func (h *bundleHandler) machinesForService(service string) []string {
 	machines := make([]string, 0, len(h.unitStatus))
 	for unit, machine := range h.unitStatus {
@@ -390,8 +398,10 @@ func (h *bundleHandler) machinesForService(service string) []string {
 	return machines
 }
 
-func (h *bundleHandler) resolveMachine(m string) (string, error) {
-	machineOrUnit := resolve(m, h.results)
+// resolveMachine returns the machine id resolving the given unit or machine
+// placeholder.
+func (h *bundleHandler) resolveMachine(placeholder string) (string, error) {
+	machineOrUnit := resolve(placeholder, h.results)
 	if !names.IsValidUnit(machineOrUnit) {
 		return machineOrUnit, nil
 	}
