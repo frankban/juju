@@ -65,7 +65,7 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 
 	// Instantiate the bundle handler.
 	h := &bundleHandler{
-		changes:         make(map[string]bundlechanges.Change, numChanges),
+		changes:         changes,
 		results:         make(map[string]string, numChanges),
 		client:          client,
 		csclient:        csclient,
@@ -77,9 +77,6 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 		ignoredMachines: make(map[string]bool, len(data.Services)),
 		ignoredUnits:    make(map[string]bool, len(data.Services)),
 		watcher:         watcher,
-	}
-	for _, change := range changes {
-		h.changes[change.Id()] = change
 	}
 
 	// Deploy the bundle.
@@ -109,8 +106,8 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 
 // bundleHandler provides helpers and the state required to deploy a bundle.
 type bundleHandler struct {
-	// changes maps bundle change ids with the actual changes.
-	changes map[string]bundlechanges.Change
+	// changes holds the changes to be applied in order to deploy the bundle.
+	changes []bundlechanges.Change
 	// results collects data resulting from applying changes. Keys are
 	// identifier for changes, values result from interacting with the
 	// environment, and are stored so that they can be potentially reused

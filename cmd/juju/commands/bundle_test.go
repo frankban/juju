@@ -255,6 +255,22 @@ func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidMachineContainerType(
 	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot create machine for hosting "wp" unit: invalid container type "bad"`)
 }
 
+func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidSeries(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "vivid/django-0", "dummy")
+	_, err := s.deployBundleYAML(c, `
+        services:
+            django:
+                charm: vivid/django
+                num_units: 1
+                to:
+                    - 1
+        machines:
+            1:
+                series: trusty
+    `)
+	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot add unit for service "django": cannot assign unit "django/0" to machine 0: series does not match`)
+}
+
 func (s *deployRepoCharmStoreSuite) TestDeployBundleLocalDeployment(c *gc.C) {
 	testcharms.Repo.ClonedDirPath(s.SeriesPath, "mysql")
 	testcharms.Repo.ClonedDirPath(s.SeriesPath, "wordpress")
@@ -712,4 +728,193 @@ deployment of bundle "local:bundle/example-0" completed`
 	expectedCons, err := constraints.Parse("cpu-cores=4 mem=4G")
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(cons, jc.DeepEquals, expectedCons)
+}
+
+func (s *deployRepoCharmStoreSuite) TestDeployBundleTwiceScaleUp(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/django-42", "dummy")
+	_, err := s.deployBundleYAML(c, `
+        services:
+            django:
+                charm: cs:trusty/django-42
+                num_units: 2
+    `)
+	c.Assert(err, jc.ErrorIsNil)
+	output, err := s.deployBundleYAML(c, `
+        services:
+            django:
+                charm: cs:trusty/django-42
+                num_units: 5
+    `)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput := `
+added charm cs:trusty/django-42
+reusing service django (charm: cs:trusty/django-42)
+added django/2 unit to new machine
+added django/3 unit to new machine
+added django/4 unit to new machine
+avoid adding new units to service django: 5 units already present
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+	s.assertUnitsCreated(c, map[string]string{
+		"django/0": "0",
+		"django/1": "1",
+		"django/2": "2",
+		"django/3": "3",
+		"django/4": "4",
+	})
+}
+
+func (s *deployRepoCharmStoreSuite) TestDeployBundleUnitPlacedInService(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/django-42", "dummy")
+	testcharms.UploadCharm(c, s.client, "trusty/wordpress-0", "wordpress")
+	output, err := s.deployBundleYAML(c, `
+        services:
+            wordpress:
+                charm: wordpress
+                num_units: 3
+            django:
+                charm: cs:trusty/django-42
+                num_units: 2
+                to: [wordpress]
+    `)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput := `
+added charm cs:trusty/django-42
+service django deployed (charm: cs:trusty/django-42)
+added charm cs:trusty/wordpress-0
+service wordpress deployed (charm: cs:trusty/wordpress-0)
+added wordpress/0 unit to new machine
+added wordpress/1 unit to new machine
+added wordpress/2 unit to new machine
+added django/0 unit to machine 0
+added django/1 unit to machine 1
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+	s.assertUnitsCreated(c, map[string]string{
+		"django/0":    "0",
+		"django/1":    "1",
+		"wordpress/0": "0",
+		"wordpress/1": "1",
+		"wordpress/2": "2",
+	})
+}
+
+func (s *deployRepoCharmStoreSuite) TestDeployBundleUnitColocationWithUnit(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/django-42", "dummy")
+	testcharms.UploadCharm(c, s.client, "trusty/mem-47", "dummy")
+	testcharms.UploadCharm(c, s.client, "trusty/rails-0", "dummy")
+	output, err := s.deployBundleYAML(c, `
+        services:
+            memcached:
+                charm: cs:trusty/mem-47
+                num_units: 3
+                to: [1, new]
+            django:
+                charm: cs:trusty/django-42
+                num_units: 5
+                to:
+                    - memcached/0
+                    - lxc:memcached/1
+                    - lxc:memcached/2
+                    - kvm:ror
+            ror:
+                charm: rails
+                num_units: 2
+                to:
+                    - new
+                    - 1
+        machines:
+            1:
+                series: trusty
+    `)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput := `
+added charm cs:trusty/django-42
+service django deployed (charm: cs:trusty/django-42)
+added charm cs:trusty/mem-47
+service memcached deployed (charm: cs:trusty/mem-47)
+added charm cs:trusty/rails-0
+service ror deployed (charm: cs:trusty/rails-0)
+created new machine 0 for holding memcached unit
+added memcached/0 unit to machine 0
+added ror/0 unit to machine 0
+created 0/kvm/0 container in machine 0 for holding django unit
+created new machine 1 for holding memcached unit
+created new machine 2 for holding memcached unit
+created new machine 3 for holding ror unit
+added django/0 unit to machine 0
+added django/1 unit to machine 0/kvm/0
+added memcached/1 unit to machine 1
+added memcached/2 unit to machine 2
+added ror/1 unit to machine 3
+created 1/lxc/0 container in machine 1 for holding django unit
+created 2/lxc/0 container in machine 2 for holding django unit
+created 3/kvm/0 container in machine 3 for holding django unit
+added django/2 unit to machine 1/lxc/0
+added django/3 unit to machine 2/lxc/0
+added django/4 unit to machine 3/kvm/0
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+	s.assertUnitsCreated(c, map[string]string{
+		"django/0":    "0",
+		"django/1":    "0/kvm/0",
+		"django/2":    "1/lxc/0",
+		"django/3":    "2/lxc/0",
+		"django/4":    "3/kvm/0",
+		"memcached/0": "0",
+		"memcached/1": "1",
+		"memcached/2": "2",
+		"ror/0":       "0",
+		"ror/1":       "3",
+	})
+}
+
+func (s *deployRepoCharmStoreSuite) TestDeployBundleUnitPlacedToMachines(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/django-42", "dummy")
+	output, err := s.deployBundleYAML(c, `
+        services:
+            django:
+                charm: cs:django
+                num_units: 7
+                to:
+                    - new
+                    - 4
+                    - kvm:8
+                    - lxc:4
+                    - lxc:4
+                    - lxc:new
+        machines:
+            4:
+            8:
+    `)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput := `
+added charm cs:trusty/django-42
+service django deployed (charm: cs:trusty/django-42)
+created new machine 0 for holding django unit
+created new machine 1 for holding django unit
+added django/0 unit to machine 0
+created new machine 2 for holding django unit
+created 1/kvm/0 container in machine 1 for holding django unit
+created 0/lxc/0 container in machine 0 for holding django unit
+created 0/lxc/1 container in machine 0 for holding django unit
+created 3/lxc/0 container in new machine for holding django unit
+created 4/lxc/0 container in new machine for holding django unit
+added django/1 unit to machine 2
+added django/2 unit to machine 1/kvm/0
+added django/3 unit to machine 0/lxc/0
+added django/4 unit to machine 0/lxc/1
+added django/5 unit to machine 3/lxc/0
+added django/6 unit to machine 4/lxc/0
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+	s.assertUnitsCreated(c, map[string]string{
+		"django/0": "0",       // Machine "4" in the bundle.
+		"django/1": "2",       // Machine "new" in the bundle.
+		"django/2": "1/kvm/0", // The KVM container in bundle machine "8".
+		"django/3": "0/lxc/0", // First LXC container in bundle machine "4".
+		"django/4": "0/lxc/1", // Second LXC container in bundle machine "4".
+		"django/5": "3/lxc/0", // First LXC in new machine.
+		"django/6": "4/lxc/0", // Second LXC in new machine.
+	})
 }
