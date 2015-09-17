@@ -342,26 +342,29 @@ func (h *bundleHandler) setAnnotations(id string, p bundlechanges.SetAnnotations
 // units, and units belong to services.
 // Receive the id of the "addMachine" change.
 func (h *bundleHandler) serviceForMachineChange(id string) string {
-	var change bundlechanges.Change
 mainloop:
-	for _, change = range h.changes {
+	for _, change := range h.changes {
 		for _, required := range change.Requires() {
 			if required == id {
-				break mainloop
+				switch change := change.(type) {
+				case *bundlechanges.AddMachineChange:
+					// The original machine is a container, and its parent is
+					// another "addMachines" change. Search again using the
+					// parent id.
+					return h.serviceForMachineChange(change.Id())
+				case *bundlechanges.AddUnitChange:
+					// We have found the "addUnit" change, which refers to the
+					// service: now resolve the service holding the unit.
+					return resolve(change.Params.Service, h.results)
+				case *bundlechanges.SetAnnotationsChange:
+					// A machine change is always required to set machine
+					// annotations, but this isn't the interesting change here.
+					continue mainloop
+				default:
+					panic(fmt.Sprintf("unexpected change %T", change))
+				}
 			}
 		}
-	}
-	switch change := change.(type) {
-	case *bundlechanges.AddMachineChange:
-		// The original machine is a container, and its parent is another
-		// "addMachines" change. Search again using the parent id.
-		return h.serviceForMachineChange(change.Id())
-	case *bundlechanges.AddUnitChange:
-		// We have found the "addUnit" change, which refers to the service: now
-		// resolve the service holding the unit.
-		return resolve(change.Params.Service, h.results)
-	default:
-		panic(fmt.Sprintf("unexpected change %T", change))
 	}
 	panic("unreachable")
 }
