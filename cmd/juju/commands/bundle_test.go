@@ -250,7 +250,7 @@ func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidMachineContainerType(
         machines:
             1:
     `)
-	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot create machine for hosting "wp" unit: invalid container type "bad"`)
+	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot create machine for holding wp unit: invalid container type "bad"`)
 }
 
 func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidSeries(c *gc.C) {
@@ -669,9 +669,9 @@ reusing service sql (charm: cs:trusty/mysql-2)
 added charm cs:trusty/wordpress-0
 reusing service wp (charm: cs:trusty/wordpress-0)
 service wp configured
-avoid creating other machines to host wp units: 2 units already present
+avoid creating other machines to host wp units
 avoid adding new units to service wp: 2 units already present
-avoid creating other machines to host sql units: 2 units already present
+avoid creating other machines to host sql units
 avoid adding new units to service sql: 2 units already present
 deployment of bundle "local:bundle/example-0" completed`
 	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
@@ -833,7 +833,7 @@ added charm cs:trusty/mem-47
 service memcached deployed (charm: cs:trusty/mem-47)
 added charm cs:trusty/rails-0
 service ror deployed (charm: cs:trusty/rails-0)
-created new machine 0 for holding memcached unit
+created new machine 0 for holding memcached and ror units
 added memcached/0 unit to machine 0
 added ror/0 unit to machine 0
 created 0/kvm/0 container in machine 0 for holding django unit

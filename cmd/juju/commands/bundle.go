@@ -108,16 +108,17 @@ func deployBundle(data *charm.BundleData, client *api.Client, csclient *csClient
 type bundleHandler struct {
 	// changes holds the changes to be applied in order to deploy the bundle.
 	changes []bundlechanges.Change
-	// results collects data resulting from applying changes. Keys are
-	// identifier for changes, values result from interacting with the
-	// environment, and are stored so that they can be potentially reused
-	// later, for instance for resolving a dynamic placeholder included in
-	// a change. Specifically, the following values are stored:
+	// results collects data resulting from applying changes. Keys identify
+	// changes, values result from interacting with the environment, and are
+	// stored so that they can be potentially reused later, for instance for
+	// resolving a dynamic placeholder included in a change. Specifically, the
+	// following values are stored:
 	// - when adding a charm, the fully resolved charm is stored;
 	// - when deploying a service, the service name is stored;
 	// - when adding a machine, the resulting machine id is stored;
 	// - when adding a unit, either the id of the machine holding the unit or
-	//   the unit name can be stored.
+	//   the unit name can be stored. The latter happens when a machine is
+	//   implicitly created by adding a unit without a machine spec.
 	results map[string]string
 	// client is used to interact with the environment.
 	client *api.Client
@@ -133,7 +134,7 @@ type bundleHandler struct {
 	// data is the original bundle data that we want to deploy.
 	data *charm.BundleData
 	// unitStatus reflects the environment status and maps unit names to their
-	// corresponding machine identifiers. This is keep updated by both change
+	// corresponding machine identifiers. This is kept updated by both change
 	// handlers (addCharm, addService etc.) and by updateUnitStatus.
 	unitStatus map[string]string
 	// ignoredMachines and ignoredUnits map service names to whether a machine
@@ -202,19 +203,29 @@ func (h *bundleHandler) addService(id string, p bundlechanges.AddServiceParams) 
 // addMachine creates a new top-level machine or container in the environment.
 func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) error {
 	// Check whether the desired number of units already exist in the
-	// environment, in which case, avoid adding other machines to host those
+	// environment, in which case avoid adding other machines to host those
 	// service units.
-	service := h.serviceForMachineChange(id)
-	existingMachines := h.machinesForService(service)
-	numExisting := len(existingMachines)
-	if numExisting >= h.data.Services[service].NumUnits {
-		if !h.ignoredMachines[service] {
-			h.ignoredMachines[service] = true
-			h.log.Infof("avoid creating other machines to host %s units: %s", service, existingUnitsMessage(numExisting))
+	machine, services := h.chooseMachine(id)
+	// Note that we always have at least one service that justifies the
+	// creation of this machine.
+	svcMsg, unitMsg := services[0], "unit"
+	svcLen := len(services)
+	if svcLen != 1 {
+		svcMsg = strings.Join(services[:svcLen-1], ", ") + " and " + services[svcLen-1]
+		unitMsg = "units"
+	}
+	if machine != "" {
+		h.results[id] = machine
+		var notify bool
+		for _, service := range services {
+			if !h.ignoredMachines[service] {
+				h.ignoredMachines[service] = true
+				notify = true
+			}
 		}
-		// We still need to set the resulting machine id, as subsequent changes
-		// can depend on this one. This is our best guess for now.
-		h.results[id] = existingMachines[rand.Intn(numExisting)]
+		if notify {
+			h.log.Infof("avoid creating other machines to host %s units", svcMsg)
+		}
 		return nil
 	}
 	cons, err := constraints.Parse(p.Constraints)
@@ -230,30 +241,30 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	if p.ContainerType != "" {
 		containerType, err := instance.ParseContainerType(p.ContainerType)
 		if err != nil {
-			return errors.Annotatef(err, "cannot create machine for hosting %q unit", service)
+			return errors.Annotatef(err, "cannot create machine for holding %s %s", svcMsg, unitMsg)
 		}
 		machineParams.ContainerType = containerType
 		if p.ParentId != "" {
 			machineParams.ParentId, err = h.resolveMachine(p.ParentId)
 			if err != nil {
-				return errors.Annotatef(err, "cannot retrieve parent placement for %q unit", service)
+				return errors.Annotatef(err, "cannot retrieve parent placement for %s machine", svcMsg)
 			}
 		}
 	}
 	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
 	if err != nil {
-		return errors.Annotatef(err, "cannot create machine for hosting %q unit", service)
+		return errors.Annotatef(err, "cannot create machine for holding %s %s", svcMsg, unitMsg)
 	}
 	if r[0].Error != nil {
-		return errors.Trace(r[0].Error)
+		return errors.Annotatef(r[0].Error, "cannot create machine for holding %s %s", svcMsg, unitMsg)
 	}
-	machine := r[0].Machine
+	machine = r[0].Machine
 	if p.ContainerType == "" {
-		h.log.Infof("created new machine %s for holding %s unit", machine, service)
+		h.log.Infof("created new machine %s for holding %s %s", machine, svcMsg, unitMsg)
 	} else if p.ParentId == "" {
-		h.log.Infof("created %s container in new machine for holding %s unit", machine, service)
+		h.log.Infof("created %s container in new machine for holding %s %s", machine, svcMsg, unitMsg)
 	} else {
-		h.log.Infof("created %s container in machine %s for holding %s unit", machine, machineParams.ParentId, service)
+		h.log.Infof("created %s container in machine %s for holding %s %s", machine, machineParams.ParentId, svcMsg, unitMsg)
 	}
 	h.results[id] = machine
 	return nil
@@ -280,7 +291,7 @@ func (h *bundleHandler) addRelation(id string, p bundlechanges.AddRelationParams
 // addUnit adds a single unit to a service already present in the environment.
 func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error {
 	// Check whether the desired number of units already exist in the
-	// environment, in which case, avoid adding other units.
+	// environment, in which case avoid adding other units.
 	service := resolve(p.Service, h.results)
 	existingMachines := h.machinesForService(service)
 	numExisting := len(existingMachines)
@@ -295,10 +306,11 @@ func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error 
 		h.results[id] = existingMachines[rand.Intn(numExisting)]
 		return nil
 	}
-	machineSpec := ""
+	var machineSpec string
 	if p.To != "" {
 		var err error
 		if machineSpec, err = h.resolveMachine(p.To); err != nil {
+			// Should never happen.
 			return errors.Annotatef(err, "cannot retrieve placement for %q unit", service)
 		}
 	}
@@ -330,36 +342,86 @@ func (h *bundleHandler) setAnnotations(id string, p bundlechanges.SetAnnotations
 	return nil
 }
 
-// serviceForMachineChange returns the name of the service for which an
+// chooseMachine returns an existing machine id for the given change id and a
+// list of services that require the machine. If there are no existing
+// machines, an empty id is returned.
+func (h *bundleHandler) chooseMachine(changeId string) (string, []string) {
+	services := h.servicesForMachineChange(changeId)
+	machines := make(map[string]int, len(h.unitStatus))
+	numUnits := make(map[string]int, len(h.data.Services))
+	// Collect the number of units and the corresponding machines for all
+	// involved services.
+	for unit, machine := range h.unitStatus {
+		svc, err := names.UnitService(unit)
+		if err != nil {
+			// Should never happen.
+			panic(err)
+		}
+		for _, service := range services {
+			if service != svc {
+				continue
+			}
+			machines[machine]++
+			numUnits[service]++
+		}
+	}
+	// If at least one service still requires units to be added, return an
+	// empty machine in order to force new machine creation.
+	for service, num := range numUnits {
+		if num < h.data.Services[service].NumUnits {
+			return "", services
+		}
+	}
+	// Return the least used machine.
+	var result string
+	var min int
+	for machine, num := range machines {
+		if result == "" || num < min {
+			result, min = machine, num
+		}
+	}
+	return result, services
+}
+
+// servicesForMachineChange returns the names of the services for which an
 // "addMachine" change is required, as adding machines is required to place
 // units, and units belong to services.
 // Receive the id of the "addMachine" change.
-func (h *bundleHandler) serviceForMachineChange(id string) string {
+func (h *bundleHandler) servicesForMachineChange(changeId string) []string {
+	services := make(map[string]bool, len(h.data.Services))
 mainloop:
 	for _, change := range h.changes {
 		for _, required := range change.Requires() {
-			if required == id {
-				switch change := change.(type) {
-				case *bundlechanges.AddMachineChange:
-					// The original machine is a container, and its parent is
-					// another "addMachines" change. Search again using the
-					// parent id.
-					return h.serviceForMachineChange(change.Id())
-				case *bundlechanges.AddUnitChange:
-					// We have found the "addUnit" change, which refers to the
-					// service: now resolve the service holding the unit.
-					return resolve(change.Params.Service, h.results)
-				case *bundlechanges.SetAnnotationsChange:
-					// A machine change is always required to set machine
-					// annotations, but this isn't the interesting change here.
-					continue mainloop
-				default:
-					panic(fmt.Sprintf("unexpected change %T", change))
-				}
+			if required != changeId {
+				continue
+			}
+			switch change := change.(type) {
+			case *bundlechanges.AddMachineChange:
+				// The original machine is a container, and its parent is
+				// another "addMachines" change. Search again using the
+				// parent id.
+				return h.servicesForMachineChange(change.Id())
+			case *bundlechanges.AddUnitChange:
+				// We have found the "addUnit" change, which refers to a
+				// service: now resolve the service holding the unit.
+				service := resolve(change.Params.Service, h.results)
+				services[service] = true
+				continue mainloop
+			case *bundlechanges.SetAnnotationsChange:
+				// A machine change is always required to set machine
+				// annotations, but this isn't the interesting change here.
+				continue mainloop
+			default:
+				// Should never happen.
+				panic(fmt.Sprintf("unexpected change %T", change))
 			}
 		}
 	}
-	panic("unreachable")
+	results := make([]string, 0, len(services))
+	for service := range services {
+		results = append(results, service)
+	}
+	return results
 }
 
 // updateUnitStatus uses the mega-watcher to update units and machines info
@@ -385,6 +447,7 @@ func (h *bundleHandler) machinesForService(service string) []string {
 	for unit, machine := range h.unitStatus {
 		svc, err := names.UnitService(unit)
 		if err != nil {
+			// Should never happen.
 			panic(err)
 		}
 		if svc == service {
