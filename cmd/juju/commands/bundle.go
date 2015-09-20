@@ -442,22 +442,39 @@ func (h *bundleHandler) chooseMachine(services ...string) string {
 
 // updateUnitStatus uses the mega-watcher to update units and machines info
 // (h.unitStatus) so that it reflects the current environment status.
+// This function must be called assuming new delta changes are available or
+// will be available within the watcher time period. Otherwise, the function
+// unblocks and an error is returned.
 func (h *bundleHandler) updateUnitStatus() error {
-	delta, err := h.watcher.Next()
-	if err != nil {
-		return errors.Annotate(err, "cannot update environment status")
+	type result struct {
+		delta []multiwatcher.Delta
+		err   error
 	}
-	for _, d := range delta {
-		switch entity := d.Entity.(type) {
-		case *multiwatcher.UnitInfo:
-			h.unitStatus[entity.Name] = entity.MachineId
+	c := make(chan result, 1)
+	go func() {
+		var r result
+		r.delta, r.err = h.watcher.Next()
+		c <- r
+	}()
+	select {
+	case r := <-c:
+		if r.err != nil {
+			return errors.Annotate(r.err, "cannot update environment status")
 		}
+		for _, d := range r.delta {
+			switch entityInfo := d.Entity.(type) {
+			case *multiwatcher.UnitInfo:
+				h.unitStatus[entityInfo.Name] = entityInfo.MachineId
+			}
+		}
+	case <-time.After(watcher.Period + 100*time.Millisecond):
+		return errors.New("timeout while trying to get new changes from the watcher")
 	}
 	return nil
 }
 
-// numUnitsForService return the number of units belonging to the given
-// service currently in the environment.
+// numUnitsForService return the number of units belonging to the given service
+// currently in the environment.
 func (h *bundleHandler) numUnitsForService(service string) (num int) {
 	for unit := range h.unitStatus {
 		svc, err := names.UnitService(unit)
@@ -480,17 +497,8 @@ func (h *bundleHandler) resolveMachine(placeholder string) (string, error) {
 		return machineOrUnit, nil
 	}
 	for h.unitStatus[machineOrUnit] == "" {
-		c := make(chan error, 1)
-		go func() {
-			c <- h.updateUnitStatus()
-		}()
-		select {
-		case err := <-c:
-			if err != nil {
-				return "", errors.Annotate(err, "cannot resolve machine")
-			}
-		case <-time.After(watcher.Period + 100*time.Millisecond):
-			return "", errors.New("timeout while trying to resolve machine")
+		if err := h.updateUnitStatus(); err != nil {
+			return "", errors.Annotate(err, "cannot resolve machine")
 		}
 	}
 	return h.unitStatus[machineOrUnit], nil
