@@ -5,7 +5,7 @@ package commands
 
 import (
 	"fmt"
-	"math/rand"
+	"sort"
 	"strings"
 
 	"github.com/juju/bundlechanges"
@@ -202,10 +202,7 @@ func (h *bundleHandler) addService(id string, p bundlechanges.AddServiceParams) 
 
 // addMachine creates a new top-level machine or container in the environment.
 func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) error {
-	// Check whether the desired number of units already exist in the
-	// environment, in which case avoid adding other machines to host those
-	// service units.
-	machine, services := h.chooseMachine(id)
+	services := h.servicesForMachineChange(id)
 	// Note that we always have at least one service that justifies the
 	// creation of this machine.
 	svcMsg, unitMsg := services[0], "unit"
@@ -214,6 +211,10 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 		svcMsg = strings.Join(services[:svcLen-1], ", ") + " and " + services[svcLen-1]
 		unitMsg = "units"
 	}
+	// Check whether the desired number of units already exist in the
+	// environment, in which case avoid adding other machines to host those
+	// service units.
+	machine := h.chooseMachine(services...)
 	if machine != "" {
 		h.results[id] = machine
 		var notify bool
@@ -290,20 +291,23 @@ func (h *bundleHandler) addRelation(id string, p bundlechanges.AddRelationParams
 
 // addUnit adds a single unit to a service already present in the environment.
 func (h *bundleHandler) addUnit(id string, p bundlechanges.AddUnitParams) error {
+	service := resolve(p.Service, h.results)
 	// Check whether the desired number of units already exist in the
 	// environment, in which case avoid adding other units.
-	service := resolve(p.Service, h.results)
-	existingMachines := h.machinesForService(service)
-	numExisting := len(existingMachines)
-	if numExisting >= h.data.Services[service].NumUnits {
+	machine := h.chooseMachine(service)
+	if machine != "" {
+		h.results[id] = machine
 		if !h.ignoredUnits[service] {
 			h.ignoredUnits[service] = true
-			h.log.Infof("avoid adding new units to service %s: %s", service, existingUnitsMessage(numExisting))
+			num := h.numUnitsForService(service)
+			var msg string
+			if num == 1 {
+				msg = "1 unit already present"
+			} else {
+				msg = fmt.Sprintf("%d units already present", num)
+			}
+			h.log.Infof("avoid adding new units to service %s: %s", service, msg)
 		}
-		// We still need to set the machine used to add this unit, as
-		// subsequent changes can depend on this one. Using one of the machines
-		// hosting units for the current service is out best guess.
-		h.results[id] = existingMachines[rand.Intn(numExisting)]
 		return nil
 	}
 	var machineSpec string
@@ -342,47 +346,6 @@ func (h *bundleHandler) setAnnotations(id string, p bundlechanges.SetAnnotations
 	return nil
 }
 
-// chooseMachine returns an existing machine id for the given change id and a
-// list of services that require the machine. If there are no existing
-// machines, an empty id is returned.
-func (h *bundleHandler) chooseMachine(changeId string) (string, []string) {
-	services := h.servicesForMachineChange(changeId)
-	machines := make(map[string]int, len(h.unitStatus))
-	numUnits := make(map[string]int, len(h.data.Services))
-	// Collect the number of units and the corresponding machines for all
-	// involved services.
-	for unit, machine := range h.unitStatus {
-		svc, err := names.UnitService(unit)
-		if err != nil {
-			// Should never happen.
-			panic(err)
-		}
-		for _, service := range services {
-			if service != svc {
-				continue
-			}
-			machines[machine]++
-			numUnits[service]++
-		}
-	}
-	// If at least one service still requires units to be added, return an
-	// empty machine in order to force new machine creation.
-	for service, num := range numUnits {
-		if num < h.data.Services[service].NumUnits {
-			return "", services
-		}
-	}
-	// Return the least used machine.
-	var result string
-	var min int
-	for machine, num := range machines {
-		if result == "" || num < min {
-			result, min = machine, num
-		}
-	}
-	return result, services
-}
-
 // servicesForMachineChange returns the names of the services for which an
 // "addMachine" change is required, as adding machines is required to place
 // units, and units belong to services.
@@ -400,7 +363,10 @@ mainloop:
 				// The original machine is a container, and its parent is
 				// another "addMachines" change. Search again using the
 				// parent id.
-				return h.servicesForMachineChange(change.Id())
+				for _, service := range h.servicesForMachineChange(change.Id()) {
+					services[service] = true
+				}
+				continue mainloop
 			case *bundlechanges.AddUnitChange:
 				// We have found the "addUnit" change, which refers to a
 				// service: now resolve the service holding the unit.
@@ -421,7 +387,55 @@ mainloop:
 	for service := range services {
 		results = append(results, service)
 	}
+	sort.Strings(results)
 	return results
+}
+
+// chooseMachine returns the id of a machine suitable for holding a unit
+// belonging to one of the given services. If one of the services still
+// requires units to be added, an empty string is returned, meaning that a new
+// machine must be created for holding the unit. If instead all units are
+// already placed, return the id of the machine which already holds units of
+// the given services and which hosts the least number of units.
+func (h *bundleHandler) chooseMachine(services ...string) string {
+	candidateMachines := make(map[string]bool, len(h.unitStatus))
+	numUnitsPerMachine := make(map[string]int, len(h.unitStatus))
+	numUnitsPerService := make(map[string]int, len(h.data.Services))
+	// Collect the number of units and the corresponding machines for all
+	// involved services.
+	for unit, machine := range h.unitStatus {
+		// Retrieve the top level machine.
+		machine = strings.Split(machine, "/")[0]
+		numUnitsPerMachine[machine]++
+		svc, err := names.UnitService(unit)
+		if err != nil {
+			// Should never happen.
+			panic(err)
+		}
+		for _, service := range services {
+			if service != svc {
+				continue
+			}
+			numUnitsPerService[service]++
+			candidateMachines[machine] = true
+		}
+	}
+	// If at least one service still requires units to be added, return an
+	// empty machine in order to force new machine creation.
+	for _, service := range services {
+		if numUnitsPerService[service] < h.data.Services[service].NumUnits {
+			return ""
+		}
+	}
+	// Return the least used machine.
+	var result string
+	var min int
+	for machine, num := range numUnitsPerMachine {
+		if candidateMachines[machine] && (result == "" || num < min) {
+			result, min = machine, num
+		}
+	}
+	return result
 }
 
 // updateUnitStatus uses the mega-watcher to update units and machines info
@@ -440,21 +454,20 @@ func (h *bundleHandler) updateUnitStatus() error {
 	return nil
 }
 
-// machinesForService return the ids of the machines holding units belonging to
-// the given service.
-func (h *bundleHandler) machinesForService(service string) []string {
-	machines := make([]string, 0, len(h.unitStatus))
-	for unit, machine := range h.unitStatus {
+// numUnitsForService return the number of units belonging to the given
+// service currently in the environment.
+func (h *bundleHandler) numUnitsForService(service string) (num int) {
+	for unit := range h.unitStatus {
 		svc, err := names.UnitService(unit)
 		if err != nil {
 			// Should never happen.
 			panic(err)
 		}
 		if svc == service {
-			machines = append(machines, machine)
+			num++
 		}
 	}
-	return machines
+	return num
 }
 
 // resolveMachine returns the machine id resolving the given unit or machine
@@ -535,15 +548,6 @@ func setServiceOptions(client *api.Client, service string, options map[string]in
 		return errors.Annotatef(err, "cannot set options for service %q", service)
 	}
 	return nil
-}
-
-// existingUnitsMessage returns a string message stating that the given number
-// of units already exist in the environment.
-func existingUnitsMessage(num int) string {
-	if num == 1 {
-		return "1 unit already present"
-	}
-	return fmt.Sprintf("%d units already present", num)
 }
 
 // isErrServiceExists reports whether the given error has been generated

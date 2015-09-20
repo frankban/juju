@@ -916,3 +916,142 @@ deployment of bundle "local:bundle/example-0" completed`
 		"django/6": "4/lxc/0", // Second LXC in new machine.
 	})
 }
+
+func (s *deployRepoCharmStoreSuite) TestDeployBundleMassiveUnitColocation(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/django-42", "dummy")
+	testcharms.UploadCharm(c, s.client, "trusty/mem-47", "dummy")
+	testcharms.UploadCharm(c, s.client, "trusty/rails-0", "dummy")
+	output, err := s.deployBundleYAML(c, `
+        services:
+            memcached:
+                charm: cs:trusty/mem-47
+                num_units: 3
+                to: [1, 2, 3]
+            django:
+                charm: cs:trusty/django-42
+                num_units: 4
+                to:
+                    - 1
+                    - lxc:memcached
+            ror:
+                charm: rails
+                num_units: 3
+                to:
+                    - 1
+                    - kvm:3
+        machines:
+            1:
+            2:
+            3:
+    `)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput := `
+added charm cs:trusty/django-42
+service django deployed (charm: cs:trusty/django-42)
+added charm cs:trusty/mem-47
+service memcached deployed (charm: cs:trusty/mem-47)
+added charm cs:trusty/rails-0
+service ror deployed (charm: cs:trusty/rails-0)
+created new machine 0 for holding django, memcached and ror units
+created new machine 1 for holding memcached unit
+created new machine 2 for holding memcached and ror units
+added django/0 unit to machine 0
+added memcached/0 unit to machine 0
+added memcached/1 unit to machine 1
+added memcached/2 unit to machine 2
+added ror/0 unit to machine 0
+created 0/lxc/0 container in machine 0 for holding django unit
+created 1/lxc/0 container in machine 1 for holding django unit
+created 2/lxc/0 container in machine 2 for holding django unit
+created 2/kvm/0 container in machine 2 for holding ror unit
+created 2/kvm/1 container in machine 2 for holding ror unit
+added django/1 unit to machine 0/lxc/0
+added django/2 unit to machine 1/lxc/0
+added django/3 unit to machine 2/lxc/0
+added ror/1 unit to machine 2/kvm/0
+added ror/2 unit to machine 2/kvm/1
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+	s.assertUnitsCreated(c, map[string]string{
+		"django/0":    "0",
+		"django/1":    "0/lxc/0",
+		"django/2":    "1/lxc/0",
+		"django/3":    "2/lxc/0",
+		"memcached/0": "0",
+		"memcached/1": "1",
+		"memcached/2": "2",
+		"ror/0":       "0",
+		"ror/1":       "2/kvm/0",
+		"ror/2":       "2/kvm/1",
+	})
+
+	// Redeploy a very similar bundle with another service unit. The new unit
+	// is placed on machine 1 because that's the least crowded machine.
+	content := `
+        services:
+            memcached:
+                charm: cs:trusty/mem-47
+                num_units: 3
+                to: [1, 2, 3]
+            django:
+                charm: cs:trusty/django-42
+                num_units: 4
+                to:
+                    - 1
+                    - lxc:memcached
+            node:
+                charm: cs:trusty/django-42
+                num_units: 1
+                to:
+                    - lxc:memcached
+        machines:
+            1:
+            2:
+            3:
+    `
+	output, err = s.deployBundleYAML(c, content)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput = `
+added charm cs:trusty/django-42
+reusing service django (charm: cs:trusty/django-42)
+added charm cs:trusty/mem-47
+reusing service memcached (charm: cs:trusty/mem-47)
+service node deployed (charm: cs:trusty/django-42)
+avoid creating other machines to host django and memcached units
+avoid adding new units to service django: 4 units already present
+avoid adding new units to service memcached: 3 units already present
+created 1/lxc/1 container in machine 1 for holding node unit
+added node/0 unit to machine 1/lxc/1
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+
+	// Redeploy the same bundle again and check that nothing happens.
+	output, err = s.deployBundleYAML(c, content)
+	c.Assert(err, jc.ErrorIsNil)
+	expectedOutput = `
+added charm cs:trusty/django-42
+reusing service django (charm: cs:trusty/django-42)
+added charm cs:trusty/mem-47
+reusing service memcached (charm: cs:trusty/mem-47)
+reusing service node (charm: cs:trusty/django-42)
+avoid creating other machines to host django and memcached units
+avoid adding new units to service django: 4 units already present
+avoid adding new units to service memcached: 3 units already present
+avoid creating other machines to host node units
+avoid adding new units to service node: 1 unit already present
+deployment of bundle "local:bundle/example-0" completed`
+	c.Assert(output, gc.Equals, strings.TrimSpace(expectedOutput))
+	s.assertUnitsCreated(c, map[string]string{
+		"django/0":    "0",
+		"django/1":    "0/lxc/0",
+		"django/2":    "1/lxc/0",
+		"django/3":    "2/lxc/0",
+		"memcached/0": "0",
+		"memcached/1": "1",
+		"memcached/2": "2",
+		"node/0":      "1/lxc/1",
+		"ror/0":       "0",
+		"ror/1":       "2/kvm/0",
+		"ror/2":       "2/kvm/1",
+	})
+}
