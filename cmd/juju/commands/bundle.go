@@ -207,11 +207,10 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	services := h.servicesForMachineChange(id)
 	// Note that we always have at least one service that justifies the
 	// creation of this machine.
-	svcMsg, unitMsg := services[0], "unit"
+	msg := services[0] + " unit"
 	svcLen := len(services)
 	if svcLen != 1 {
-		svcMsg = strings.Join(services[:svcLen-1], ", ") + " and " + services[svcLen-1]
-		unitMsg = "units"
+		msg = strings.Join(services[:svcLen-1], ", ") + " and " + services[svcLen-1] + " units"
 	}
 	// Check whether the desired number of units already exist in the
 	// environment, in which case avoid adding other machines to host those
@@ -219,16 +218,23 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	machine := h.chooseMachine(services...)
 	if machine != "" {
 		h.results[id] = machine
-		var notify bool
+		notify := make([]string, 0, svcLen)
 		for _, service := range services {
 			if !h.ignoredMachines[service] {
 				h.ignoredMachines[service] = true
-				notify = true
+				notify = append(notify, service)
 			}
 		}
-		if notify {
-			h.log.Infof("avoid creating other machines to host %s units", svcMsg)
+		svcLen = len(notify)
+		switch svcLen {
+		case 0:
+			return nil
+		case 1:
+			msg = notify[0]
+		default:
+			msg = strings.Join(notify[:svcLen-1], ", ") + " and " + notify[svcLen-1]
 		}
+		h.log.Infof("avoid creating other machines to host %s units", msg)
 		return nil
 	}
 	cons, err := constraints.Parse(p.Constraints)
@@ -244,30 +250,30 @@ func (h *bundleHandler) addMachine(id string, p bundlechanges.AddMachineParams) 
 	if p.ContainerType != "" {
 		containerType, err := instance.ParseContainerType(p.ContainerType)
 		if err != nil {
-			return errors.Annotatef(err, "cannot create machine for holding %s %s", svcMsg, unitMsg)
+			return errors.Annotatef(err, "cannot create machine for holding %s", msg)
 		}
 		machineParams.ContainerType = containerType
 		if p.ParentId != "" {
 			machineParams.ParentId, err = h.resolveMachine(p.ParentId)
 			if err != nil {
-				return errors.Annotatef(err, "cannot retrieve parent placement for %s machine", svcMsg)
+				return errors.Annotatef(err, "cannot retrieve parent placement for %s", msg)
 			}
 		}
 	}
 	r, err := h.client.AddMachines([]params.AddMachineParams{machineParams})
 	if err != nil {
-		return errors.Annotatef(err, "cannot create machine for holding %s %s", svcMsg, unitMsg)
+		return errors.Annotatef(err, "cannot create machine for holding %s", msg)
 	}
 	if r[0].Error != nil {
-		return errors.Annotatef(r[0].Error, "cannot create machine for holding %s %s", svcMsg, unitMsg)
+		return errors.Annotatef(r[0].Error, "cannot create machine for holding %s", msg)
 	}
 	machine = r[0].Machine
 	if p.ContainerType == "" {
-		h.log.Infof("created new machine %s for holding %s %s", machine, svcMsg, unitMsg)
+		h.log.Infof("created new machine %s for holding %s", machine, msg)
 	} else if p.ParentId == "" {
-		h.log.Infof("created %s container in new machine for holding %s %s", machine, svcMsg, unitMsg)
+		h.log.Infof("created %s container in new machine for holding %s", machine, msg)
 	} else {
-		h.log.Infof("created %s container in machine %s for holding %s %s", machine, machineParams.ParentId, svcMsg, unitMsg)
+		h.log.Infof("created %s container in machine %s for holding %s", machine, machineParams.ParentId, msg)
 	}
 	h.results[id] = machine
 	return nil
@@ -440,6 +446,10 @@ func (h *bundleHandler) chooseMachine(services ...string) string {
 	return result
 }
 
+// updateUnitStatusPeriod is the time duration used to wait for a mega-watcher
+// change to be available.
+var updateUnitStatusPeriod = watcher.Period + 100*time.Millisecond
+
 // updateUnitStatus uses the mega-watcher to update units and machines info
 // (h.unitStatus) so that it reflects the current environment status.
 // This function must be called assuming new delta changes are available or
@@ -450,14 +460,14 @@ func (h *bundleHandler) updateUnitStatus() error {
 		delta []multiwatcher.Delta
 		err   error
 	}
-	c := make(chan result, 1)
+	ch := make(chan result, 1)
 	go func() {
 		var r result
 		r.delta, r.err = h.watcher.Next()
-		c <- r
+		ch <- r
 	}()
 	select {
-	case r := <-c:
+	case r := <-ch:
 		if r.err != nil {
 			return errors.Annotate(r.err, "cannot update environment status")
 		}
@@ -467,7 +477,7 @@ func (h *bundleHandler) updateUnitStatus() error {
 				h.unitStatus[entityInfo.Name] = entityInfo.MachineId
 			}
 		}
-	case <-time.After(watcher.Period + 100*time.Millisecond):
+	case <-time.After(updateUnitStatusPeriod):
 		return errors.New("timeout while trying to get new changes from the watcher")
 	}
 	return nil

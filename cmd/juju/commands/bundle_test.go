@@ -269,6 +269,23 @@ func (s *deployRepoCharmStoreSuite) TestDeployBundleInvalidSeries(c *gc.C) {
 	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot add unit for service "django": cannot assign unit "django/0" to machine 0: series does not match`)
 }
 
+func (s *deployRepoCharmStoreSuite) TestDeployBundleWatcherTimeout(c *gc.C) {
+	testcharms.UploadCharm(c, s.client, "trusty/django-0", "dummy")
+	testcharms.UploadCharm(c, s.client, "trusty/wordpress-0", "wordpress")
+	s.PatchValue(&updateUnitStatusPeriod, 0*time.Second)
+	_, err := s.deployBundleYAML(c, `
+        services:
+            django:
+                charm: django
+                num_units: 1
+            wordpress:
+                charm: wordpress
+                num_units: 1
+                to: [django]
+    `)
+	c.Assert(err, gc.ErrorMatches, `cannot deploy bundle: cannot retrieve placement for "wordpress" unit: cannot resolve machine: timeout while trying to get new changes from the watcher`)
+}
+
 func (s *deployRepoCharmStoreSuite) TestDeployBundleLocalDeployment(c *gc.C) {
 	testcharms.Repo.ClonedDirPath(s.SeriesPath, "mysql")
 	testcharms.Repo.ClonedDirPath(s.SeriesPath, "wordpress")
