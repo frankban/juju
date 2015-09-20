@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/bundlechanges"
 	"github.com/juju/errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/juju/juju/environs/config"
 	"github.com/juju/juju/instance"
 	"github.com/juju/juju/state/multiwatcher"
+	"github.com/juju/juju/state/watcher"
 )
 
 // deploymentLogger is used to notify clients about the bundle deployment
@@ -478,8 +480,17 @@ func (h *bundleHandler) resolveMachine(placeholder string) (string, error) {
 		return machineOrUnit, nil
 	}
 	for h.unitStatus[machineOrUnit] == "" {
-		if err := h.updateUnitStatus(); err != nil {
-			return "", errors.Annotate(err, "cannot resolve machine")
+		c := make(chan error, 1)
+		go func() {
+			c <- h.updateUnitStatus()
+		}()
+		select {
+		case err := <-c:
+			if err != nil {
+				return "", errors.Annotate(err, "cannot resolve machine")
+			}
+		case <-time.After(watcher.Period + 100*time.Millisecond):
+			return "", errors.New("timeout while trying to resolve machine")
 		}
 	}
 	return h.unitStatus[machineOrUnit], nil
