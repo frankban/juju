@@ -16,7 +16,6 @@ import (
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
 	"gopkg.in/juju/charm.v6-unstable"
-	"gopkg.in/juju/charmrepo.v2-unstable"
 
 	"github.com/juju/juju/agent"
 	"github.com/juju/juju/api"
@@ -769,61 +768,6 @@ func (s *serverSuite) TestBlockChangesServerUnset(c *gc.C) {
 	dummy := s.setupServerUnsetBlocked(c)
 	s.BlockAllChanges(c, "TestBlockChangesServerUnset")
 	s.assertServerUnsetBlocked(c, dummy, "TestBlockChangesServerUnset")
-}
-
-func (s *clientSuite) TestClientServiceSetYAML(c *gc.C) {
-	dummy := s.AddTestingService(c, "dummy", s.AddTestingCharm(c, "dummy"))
-
-	err := s.APIState.Client().ServiceSetYAML("dummy", "dummy:\n  title: foobar\n  username: user name\n")
-	c.Assert(err, jc.ErrorIsNil)
-	settings, err := dummy.ConfigSettings()
-	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(settings, gc.DeepEquals, charm.Settings{
-		"title":    "foobar",
-		"username": "user name",
-	})
-
-	err = s.APIState.Client().ServiceSetYAML("dummy", "dummy:\n  title: barfoo\n  username: \n")
-	c.Assert(err, jc.ErrorIsNil)
-	settings, err = dummy.ConfigSettings()
-	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(settings, gc.DeepEquals, charm.Settings{
-		"title": "barfoo",
-	})
-}
-
-func (s *clientSuite) assertServiceSetYAML(c *gc.C, dummy *state.Service) {
-	err := s.APIState.Client().ServiceSetYAML("dummy", "dummy:\n  title: foobar\n  username: user name\n")
-	c.Assert(err, jc.ErrorIsNil)
-	settings, err := dummy.ConfigSettings()
-	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(settings, gc.DeepEquals, charm.Settings{
-		"title":    "foobar",
-		"username": "user name",
-	})
-}
-
-func (s *clientSuite) assertServiceSetYAMLBlocked(c *gc.C, dummy *state.Service, msg string) {
-	err := s.APIState.Client().ServiceSetYAML("dummy", "dummy:\n  title: foobar\n  username: user name\n")
-	s.AssertBlocked(c, err, msg)
-}
-
-func (s *clientSuite) TestBlockDestroyServiceSetYAML(c *gc.C) {
-	dummy := s.AddTestingService(c, "dummy", s.AddTestingCharm(c, "dummy"))
-	s.BlockDestroyEnvironment(c, "TestBlockDestroyServiceSetYAML")
-	s.assertServiceSetYAML(c, dummy)
-}
-
-func (s *clientSuite) TestBlockRemoveServiceSetYAML(c *gc.C) {
-	dummy := s.AddTestingService(c, "dummy", s.AddTestingCharm(c, "dummy"))
-	s.BlockRemoveObject(c, "TestBlockRemoveServiceSetYAML")
-	s.assertServiceSetYAML(c, dummy)
-}
-
-func (s *clientSuite) TestBlockChangesServiceSetYAML(c *gc.C) {
-	dummy := s.AddTestingService(c, "dummy", s.AddTestingCharm(c, "dummy"))
-	s.BlockAllChanges(c, "TestBlockChangesServiceSetYAML")
-	s.assertServiceSetYAMLBlocked(c, dummy, "TestBlockChangesServiceSetYAML")
 }
 
 var clientAddServiceUnitsTests = []struct {
@@ -1621,23 +1565,6 @@ func (s *clientRepoSuite) SetUpTest(c *gc.C) {
 func (s *clientRepoSuite) TearDownTest(c *gc.C) {
 	s.CharmStoreSuite.TearDownTest(c)
 	s.baseSuite.TearDownTest(c)
-}
-
-func (s *clientRepoSuite) TestClientServiceDeployCharmErrors(c *gc.C) {
-	for url, expect := range map[string]string{
-		"wordpress":                   "charm url must include revision",
-		"cs:wordpress":                "charm url must include revision",
-		"cs:precise/wordpress":        "charm url must include revision",
-		"cs:precise/wordpress-999999": `cannot retrieve "cs:precise/wordpress-999999": charm not found`,
-	} {
-		c.Logf("test %s", url)
-		err := s.APIState.Client().ServiceDeploy(
-			url, "service", 1, "", constraints.Value{}, "",
-		)
-		c.Check(err, gc.ErrorMatches, expect)
-		_, err = s.State.Service("service")
-		c.Assert(err, jc.Satisfies, errors.IsNotFound)
-	}
 }
 
 func (s *clientRepoSuite) TestClientServiceDeployWithNetworks(c *gc.C) {
@@ -3200,52 +3127,6 @@ func (s *clientSuite) TestProvisioningScriptDisablePackageCommands(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	c.Check(script, gc.Not(jc.Contains), "apt-get update")
 	c.Check(script, gc.Not(jc.Contains), "apt-get upgrade")
-}
-
-type testModeCharmRepo struct {
-	*charmrepo.CharmStore
-	testMode bool
-}
-
-// WithTestMode returns a repository Interface where test mode is enabled.
-func (s *testModeCharmRepo) WithTestMode() charmrepo.Interface {
-	s.testMode = true
-	return s.CharmStore.WithTestMode()
-}
-
-func (s *clientRepoSuite) TestClientSpecializeStoreOnDeployServiceSetCharmAndAddCharm(c *gc.C) {
-	repo := &testModeCharmRepo{}
-	s.PatchValue(&service.NewCharmStore, func(p charmrepo.NewCharmStoreParams) charmrepo.Interface {
-		p.URL = s.Srv.URL
-		repo.CharmStore = charmrepo.NewCharmStore(p)
-		return repo
-	})
-	attrs := map[string]interface{}{"test-mode": true}
-	err := s.State.UpdateEnvironConfig(attrs, nil, nil)
-	c.Assert(err, jc.ErrorIsNil)
-
-	// Check that the store's test mode is enabled when calling ServiceDeploy.
-	curl, _ := s.UploadCharm(c, "trusty/dummy-1", "dummy")
-	err = service.AddCharmWithAuthorization(s.State, params.AddCharmWithAuthorization{URL: curl.String()})
-	c.Assert(err, jc.ErrorIsNil)
-	err = s.APIState.Client().ServiceDeploy(
-		curl.String(), "service", 3, "", constraints.Value{}, "",
-	)
-	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(repo.testMode, jc.IsTrue)
-
-	// Check that the store's test mode is enabled when calling ServiceSetCharm.
-	curl, _ = s.UploadCharm(c, "trusty/wordpress-2", "wordpress")
-	err = s.APIState.Client().ServiceSetCharm(
-		"service", curl.String(), false,
-	)
-	c.Assert(repo.testMode, jc.IsTrue)
-
-	// Check that the store's test mode is enabled when calling AddCharm.
-	curl, _ = s.UploadCharm(c, "utopic/riak-42", "riak")
-	err = s.APIState.Client().AddCharm(curl)
-	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(repo.testMode, jc.IsTrue)
 }
 
 var resolveCharmTests = []struct {
