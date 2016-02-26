@@ -36,18 +36,17 @@ func (c *guiCommand) Info() *cmd.Info {
 }
 
 func (c *guiCommand) Run(ctx *cmd.Context) error {
-	endpoint, err := c.ConnectionEndpoint(true)
-	if err != nil {
-		return errors.Annotate(err, "cannot retrieve API endpoint")
-	}
-
 	root, err := c.NewAPIRoot()
 	if err != nil {
 		return errors.Annotate(err, "cannot retrieve API root")
 	}
 	defer root.Close()
 
-	raw := fmt.Sprintf("https://%s/model/%s/gui/", root.Addr(), endpoint.ModelUUID)
+	details, err := c.ClientStore().ModelByName(c.ControllerName(), c.AccountName(), c.ModelName())
+	if err != nil {
+		return errors.Annotate(err, "cannot retrieve model details")
+	}
+	raw := fmt.Sprintf("https://%s/model/%s/gui/", root.Addr(), details.ModelUUID)
 	u, err := url.Parse(raw)
 	if err != nil {
 		return errors.Annotate(err, "cannot parse Juju GUI URL")
