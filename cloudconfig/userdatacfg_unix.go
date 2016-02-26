@@ -31,6 +31,7 @@ import (
 	"github.com/juju/juju/service"
 	"github.com/juju/juju/service/systemd"
 	"github.com/juju/juju/service/upstart"
+	"github.com/juju/juju/state/multiwatcher"
 )
 
 const (
@@ -283,6 +284,26 @@ func (w *unixConfigure) ConfigureJuju() error {
 	defer w.conf.AddRunCmd(
 		fmt.Sprintf("rm $bin/tools.tar.gz && rm $bin/juju%s.sha256", w.icfg.Tools.Version),
 	)
+
+	// If this machine manages models, add the GUI to the instance.
+	for _, job := range w.icfg.Jobs {
+		if job != multiwatcher.JobManageModel {
+			continue
+		}
+		guiData, err := ioutil.ReadFile(w.icfg.GUI.URL[len(fileSchemePrefix):])
+		if err != nil {
+			return err
+		}
+		w.conf.AddRunBinaryFile(path.Join(w.icfg.GUIDir(), "gui.tar.bz2"), []byte(guiData), 0644)
+		w.conf.AddScripts(
+			"gui="+shquote(w.icfg.GUIDir()),
+			"mkdir -p $gui",
+			"tar jxf $gui/gui.tar.bz2 -C $gui",
+			fmt.Sprintf("mv $gui/jujugui-%s/jujugui $gui/jujugui", w.icfg.GUI.Version.Number),
+			fmt.Sprintf("rm $gui/gui.tar.bz2 && rm -rf $gui/jujugui-%s", w.icfg.GUI.Version.Number),
+		)
+		break
+	}
 
 	// We add the machine agent's configuration info
 	// before running bootstrap-state so that bootstrap-state

@@ -4,10 +4,14 @@
 package bootstrap
 
 import (
+	"archive/tar"
+	"compress/bzip2"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/juju/loggo"
@@ -228,12 +232,84 @@ func Bootstrap(ctx environs.BootstrapContext, environ environs.Environ, args Boo
 		return err
 	}
 	instanceConfig.Tools = selectedTools
+	gui, err := guiArchive()
+	if err != nil {
+		return errors.Annotate(err, "cannot retrieve GUI archive")
+	}
+	ctx.Infof("using GUI version %s from %s", gui.Version.Number, gui.URL)
+	instanceConfig.GUI = gui
 	instanceConfig.CustomImageMetadata = customImageMetadata
 	if err := result.Finalize(ctx, instanceConfig); err != nil {
 		return err
 	}
 	ctx.Infof("Bootstrap agent installed")
 	return nil
+}
+
+const guiArchiveDir = "/usr/lib/juju-gui"
+
+func guiArchive() (*coretools.Tools, error) {
+	var path string
+	var number version.Number
+	fs, err := ioutil.ReadDir(guiArchiveDir)
+	if err != nil {
+		return nil, errors.Mask(err)
+	}
+	for _, f := range fs {
+		name := f.Name()
+		if filepath.Ext(name) != ".bz2" || f.IsDir() {
+			continue
+		}
+		p := filepath.Join(guiArchiveDir, name)
+		n, err := guiVersion(p)
+		if err != nil {
+			logger.Infof("cannot retrieve GUI version from %q: %s", name, err)
+			continue
+		}
+		if n.Compare(number) >= 0 {
+			number = n
+			path = p
+		}
+	}
+	if path == "" {
+		return nil, errors.New("cannot find the Juju GUI archive")
+	}
+	return &coretools.Tools{
+		Version: version.Binary{Number: number},
+		URL:     "file://" + path,
+	}, nil
+
+}
+
+func guiVersion(path string) (version.Number, error) {
+	var number version.Number
+	f, err := os.Open(path)
+	if err != nil {
+		return number, err
+	}
+	defer f.Close()
+	prefix := "jujugui-"
+	r := tar.NewReader(bzip2.NewReader(f))
+	for {
+		hdr, err := r.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return number, errors.New("cannot read GUI archive")
+		}
+		info := hdr.FileInfo()
+		if !info.IsDir() || !strings.HasPrefix(hdr.Name, prefix) {
+			continue
+		}
+		n := info.Name()[len(prefix):]
+		number, err := version.Parse(n)
+		if err != nil {
+			return number, errors.Errorf("cannot parse version %q ", n)
+		}
+		return number, nil
+	}
+	return number, errors.New("cannot find GUI in archive")
 }
 
 func userPublicSigningKey() (string, error) {

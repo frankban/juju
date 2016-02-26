@@ -535,6 +535,60 @@ func (st *State) SetModelAgentVersion(newVersion version.Number) (err error) {
 	return errors.Trace(err)
 }
 
+// SetModelGUIVersion changes the Juju GUI version for the model.
+func (st *State) SetModelGUIVersion(newVersion version.Number) (err error) {
+	buildTxn := func(attempt int) ([]txn.Op, error) {
+		settings, err := readSettings(st, modelGlobalKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		agentVersion, ok := settings.Get("agent-version")
+		if !ok {
+			return nil, errors.Errorf("no agent version set in the model")
+		}
+		currentVersion, ok := agentVersion.(string)
+		if !ok {
+			return nil, errors.Errorf("invalid agent version format: expected string, got %v", agentVersion)
+		}
+		if newVersion.String() == currentVersion {
+			// Nothing to do.
+			return nil, jujutxn.ErrNoOperations
+		}
+
+		if err := st.checkCanUpgrade(currentVersion, newVersion.String()); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		ops := []txn.Op{
+			// Can't set agent-version if there's an active upgradeInfo doc.
+			{
+				C:      upgradeInfoC,
+				Id:     currentUpgradeId,
+				Assert: txn.DocMissing,
+			}, {
+				C:      settingsC,
+				Id:     st.docID(modelGlobalKey),
+				Assert: bson.D{{"version", settings.version}},
+				Update: bson.D{
+					{"$set", bson.D{{"settings.agent-version", newVersion.String()}}},
+				},
+			},
+		}
+		return ops, nil
+	}
+	if err = st.run(buildTxn); err == jujutxn.ErrExcessiveContention {
+		// Although there is a small chance of a race here, try to
+		// return a more helpful error message in the case of an
+		// active upgradeInfo document being in place.
+		if upgrading, _ := st.IsUpgrading(); upgrading {
+			err = UpgradeInProgressError
+		} else {
+			err = errors.Annotate(err, "cannot set agent version")
+		}
+	}
+	return errors.Trace(err)
+}
+
 func (st *State) buildAndValidateModelConfig(updateAttrs map[string]interface{}, removeAttrs []string, oldConfig *config.Config) (validCfg *config.Config, err error) {
 	newConfig, err := oldConfig.Apply(updateAttrs)
 	if err != nil {

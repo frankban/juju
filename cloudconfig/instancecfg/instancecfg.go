@@ -85,6 +85,9 @@ type InstanceConfig struct {
 	// Tools is juju tools to be used on the new instance.
 	Tools *coretools.Tools
 
+	// GUI is the Juju GUI tarball to be installed in the new instance.
+	GUI *coretools.Tools
+
 	// DataDir holds the directory that juju state will be put in the new
 	// instance.
 	DataDir string
@@ -254,6 +257,10 @@ func (cfg *InstanceConfig) AgentConfig(
 
 func (cfg *InstanceConfig) JujuTools() string {
 	return agenttools.SharedToolsDir(cfg.DataDir, cfg.Tools.Version)
+}
+
+func (cfg *InstanceConfig) GUIDir() string {
+	return path.Join(cfg.DataDir, "gui")
 }
 
 func (cfg *InstanceConfig) stateHostAddrs() []string {

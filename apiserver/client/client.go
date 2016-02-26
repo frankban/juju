@@ -491,6 +491,27 @@ func (c *Client) SetModelAgentVersion(args params.SetModelAgentVersion) error {
 	return c.api.stateAccessor.SetModelAgentVersion(args.Version)
 }
 
+// SetModelGUIVersion sets the model Juju GUI version.
+func (c *Client) SetModelGUIVersion(args params.SetModelAgentVersion) error {
+	if err := c.check.ChangeAllowed(); err != nil {
+		return errors.Trace(err)
+	}
+	// Before changing the agent version to trigger an upgrade or downgrade,
+	// we'll do a very basic check to ensure the
+	cfg, err := c.api.stateAccessor.ModelConfig()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	env, err := getEnvironment(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := environs.CheckProviderAPI(env); err != nil {
+		return err
+	}
+	return c.api.stateAccessor.SetModelGUIVersion(args.Version)
+}
+
 var getEnvironment = func(cfg *config.Config) (environs.Environ, error) {
 	env, err := environs.New(cfg)
 	if err != nil {

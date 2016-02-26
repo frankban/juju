@@ -50,6 +50,7 @@ type stateInterface interface {
 	Model() (*state.Model, error)
 	ForModel(tag names.ModelTag) (*state.State, error)
 	SetModelAgentVersion(version.Number) error
+	SetModelGUIVersion(version.Number) error
 	SetAnnotations(state.GlobalEntity, map[string]string) error
 	Annotations(state.GlobalEntity) (map[string]string, error)
 	InferEndpoints(...string) ([]state.Endpoint, error)

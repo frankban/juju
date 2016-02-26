@@ -427,6 +427,9 @@ func (srv *Server) run() {
 			state:   srv.state,
 		},
 	)
+	handleAll(mux, "/model/:modeluuid/gui/", &guiRouter{
+		dataDir: srv.dataDir,
+	})
 	// For backwards compatibility we register all the old paths
 	handleAll(mux, "/log", debugLogHandler)
 

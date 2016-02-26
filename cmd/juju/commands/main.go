@@ -140,6 +140,9 @@ func registerCommands(r commandRegistry, ctx *cmd.Context) {
 	r.Register(newSwitchCommand())
 	r.Register(status.NewStatusHistoryCommand())
 
+	// GUI commands.
+	r.Register(newGUICommand())
+
 	// Error resolution and debugging commands.
 	r.Register(newRunCommand())
 	r.Register(newSCPCommand())
