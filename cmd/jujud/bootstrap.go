@@ -450,7 +450,7 @@ func (c *BootstrapCommand) populateTools(st *state.State, env environs.Environ) 
 		return errors.Annotate(err, "cannot read GUI archive")
 	}
 	defer f.Close()
-	if err := guistorage.Add(f, binarystorage.GUIMetadata{
+	if err := guistorage.Add(f, binarystorage.Metadata{
 		Version: gui.Version.String(),
 		Size:    gui.Size,
 		SHA256:  gui.SHA256,
