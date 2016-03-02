@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/websocket"
 	"launchpad.net/tomb"
 
+	agenttools "github.com/juju/juju/agent/tools"
 	"github.com/juju/juju/apiserver/common"
 	"github.com/juju/juju/apiserver/params"
 	resourceapi "github.com/juju/juju/resource/api"
@@ -427,6 +428,10 @@ func (srv *Server) run() {
 			state:   srv.state,
 		},
 	)
+	handleAll(mux, "/gui/:modeluuid/", &guiRouter{
+		baseDir: agenttools.SharedGUIDir(srv.dataDir),
+		ctxt:    httpCtxt,
+	})
 	// For backwards compatibility we register all the old paths
 	handleAll(mux, "/log", debugLogHandler)
 
