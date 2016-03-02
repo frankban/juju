@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 
-	"github.com/juju/juju/state/binarystorage"
 	"github.com/juju/juju/version"
 )
 
@@ -29,8 +28,8 @@ type guiRouter struct {
 	ctxt    httpContext
 }
 
-func (r *guiRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	rootDir, err := r.ensureFiles()
+func (router *guiRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	rootDir, err := router.ensureFiles(req)
 	if err != nil {
 		sendError(w, err)
 		return
@@ -56,9 +55,9 @@ func (r *guiRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	mux.ServeHTTP(w, req)
 }
 
-func (r *guiRouter) ensureFiles() (string, error) {
+func (router *guiRouter) ensureFiles(req *http.Request) (string, error) {
 	version := "2.0.3"
-	rootDir := filepath.Join(r.baseDir, version)
+	rootDir := filepath.Join(router.baseDir, version)
 	info, err := os.Stat(rootDir)
 	if err == nil {
 		if info.IsDir() {
@@ -69,7 +68,7 @@ func (r *guiRouter) ensureFiles() (string, error) {
 	if !os.IsNotExist(err) {
 		return "", errors.Annotate(err, "cannot stat Juju GUI root directory")
 	}
-	st, err := r.ctxt.stateForRequestUnauthenticated(req)
+	st, err := router.ctxt.stateForRequestUnauthenticated(req)
 	if err != nil {
 		return "", errors.Annotate(err, "cannot open state")
 	}
@@ -83,19 +82,22 @@ func (r *guiRouter) ensureFiles() (string, error) {
 		return "", errors.Annotatef(err, "cannot find GUI archive version %q", version)
 	}
 	defer r.Close()
-	if err := os.MkdirAll(r.baseDir, 0755); err != nil {
-		return errors.Annotate(err, "cannot create Juju GUI base directory")
+	if err := os.MkdirAll(router.baseDir, 0755); err != nil {
+		return "", errors.Annotate(err, "cannot create Juju GUI base directory")
 	}
 	if err := uncompressGUI(r, meta.Version, rootDir); err != nil {
-		return errors.Annotate(err, "cannot uncompress Juju GUI archive")
+		return "", errors.Annotate(err, "cannot uncompress Juju GUI archive")
 	}
 	return rootDir, nil
 }
 
 func uncompressGUI(r io.Reader, version, targetDir string) error {
-	tempDir := ioutil.TempDir("", "gui")
+	tempDir, err := ioutil.TempDir("", "gui")
+	if err != nil {
+		return errors.Annotate(err, "cannot create Juju GUI temporary directory")
+	}
 	defer os.Remove(tempDir)
-	guiDirName := "jujugui-" + version + "/"
+	guiDir := "jujugui-" + version + "/jujugui"
 	tr := tar.NewReader(bzip2.NewReader(r))
 	for {
 		hdr, err := tr.Next()
@@ -105,11 +107,11 @@ func uncompressGUI(r io.Reader, version, targetDir string) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !strings.HasPrefix(hdr.Name, guiDirName) {
+		if !strings.HasPrefix(hdr.Name, guiDir+"/") {
 			continue
 		}
 		info := hdr.FileInfo()
-		path := filepath.Join(tempDir, header.Name)
+		path := filepath.Join(tempDir, hdr.Name)
 		if info.IsDir() {
 			if err := os.MkdirAll(path, info.Mode()); err != nil {
 				return errors.Trace(err)
@@ -125,7 +127,7 @@ func uncompressGUI(r io.Reader, version, targetDir string) error {
 			return errors.Trace(err)
 		}
 	}
-	if err := os.Rename(tempDir, targetDir); err != nil {
+	if err := os.Rename(filepath.Join(tempDir, guiDir), targetDir); err != nil {
 		return errors.Annotate(err, "cannot rename Juju GUI root directory")
 	}
 	return nil
