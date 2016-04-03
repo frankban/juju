@@ -24,6 +24,7 @@ import (
 	"github.com/juju/juju/cloudconfig/instancecfg"
 	"github.com/juju/juju/constraints"
 	"github.com/juju/juju/environs"
+	"github.com/juju/juju/environs/gui"
 	"github.com/juju/juju/environs/imagemetadata"
 	"github.com/juju/juju/environs/simplestreams"
 	"github.com/juju/juju/environs/storage"
@@ -464,15 +465,23 @@ func validateConstraints(env environs.Environ, cons constraints.Value) error {
 	return err
 }
 
+// guiArchive returns information on the GUI archive that will be uploaded
+// to the controller.
 func guiArchive() (*coretools.GUIArchive, error) {
-	// TODO frankban: by default the GUI archive must be retrieved from
-	// simplestreams. The environment variable is only used temporarily for
-	// development purposes. This will be fixed before landing to master.
+	// The environment variable is only used for development purposes.
 	path := os.Getenv("JUJU_GUI")
 	if path == "" {
-		// TODO frankban: implement the simplestreams case.
-		// This will be fixed before landing to master.
-		return nil, nil
+		archives, err := gui.FetchGUIArchives()
+		if err != nil {
+			return nil, errors.Mask(err)
+		}
+		if len(archives) == 0 {
+			// The fact that a GUI archive cannot be found should not prevent
+			// the model to be bootstrapped.
+			logger.Debugf("no Juju GUI archives found in simplestreams")
+			return nil, nil
+		}
+		return archives[0], nil
 	}
 	number, err := guiVersion(path)
 	if err != nil {
